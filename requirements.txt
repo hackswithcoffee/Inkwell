@@ -1,0 +1,6 @@
+mlx-whisper
+librosa
+soundfile
+pydub
+pydantic
+python-dotenv

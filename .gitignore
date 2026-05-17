@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Secrets
+.env
+players.json
+
+# macOS
+.DS_Store
+
+# Editor/tool state
+.claude/
+.antigravity/
+
+# Project-specific
+archive/
+recordings/
+*.bak.*
+pipeline.log
+
+# Campaign data — backed up separately, not in the code repo
+recaps/
+lore/
+npcs/
+allies/
+transcript_raw.md
+transcript_cleaned.md
+session_data.json
