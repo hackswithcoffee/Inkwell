@@ -95,14 +95,6 @@ Data folders (`recordings/`, `recaps/`, `lore/`, `npcs/`, `allies/`, `archive/`)
 
 The pipeline picks up the most recent `.zip` in `recordings/` and processes that one.
 
-### Running via Claude Code
-
-If you keep a personal `.claude/CLAUDE.md` skill definition for this project, you can trigger the pipeline by saying any of:
-
-- "Roll for Initiative"
-- "I've added a new zip file"
-- "Process the new recordings"
-
 ## Operational behavior
 
 - **Size guard:** `.zip` files larger than 2GB are refused unless explicitly confirmed.
@@ -120,3 +112,13 @@ If you keep a personal `.claude/CLAUDE.md` skill definition for this project, yo
 - `recordings/` — drop new Craigbot `.zip` files here
 - `recaps/`, `lore/`, `npcs/`, `allies/` — generated and maintained artifacts
 - `archive/` — processed `.zip` files, renamed to the session date
+
+## License
+
+The code in this repository is released under the [MIT License](LICENSE).
+
+### D&D SRD 5.2 attribution
+
+The contents of `dnd rules/` and any derived material in `summarizer_primer.md` are sourced from Wizards of the Coast's System Reference Document 5.2:
+
+> This work includes material from the System Reference Document 5.2 ("SRD 5.2") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd. The SRD 5.2 is licensed under the Creative Commons Attribution 4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode.
