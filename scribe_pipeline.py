@@ -3,7 +3,6 @@ import re
 import sys
 import zipfile
 import shutil
-import subprocess
 import json
 import importlib.metadata
 from pathlib import Path
@@ -73,12 +72,6 @@ _check_required_env_vars()
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
-SSH_USER_HOST = os.environ["SSH_USER_HOST"]
-_REMOTE_BASE = os.environ["REMOTE_INKWELL_DIR"].rstrip("/")
-REMOTE_TRANSCRIPT_DIR = f"{_REMOTE_BASE}/transcripts/"
-REMOTE_SCRIPT_DIR = f"{_REMOTE_BASE}/scripts/"
-REMOTE_SCRIPT = f"{REMOTE_SCRIPT_DIR}extract_data.py"
-REMOTE_SESSION_JSON = f"{REMOTE_SCRIPT_DIR}session_data.json"
 MAX_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2GB
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 AUDIO_EXTENSIONS = ('.wav', '.flac', '.aac', '.mp3', '.m4a')
@@ -246,47 +239,21 @@ def write_transcripts(all_segments: list) -> Path:
     return CLEANED_TRANSCRIPT
 
 
-# ── Remote extraction ──────────────────────────────────────────────────────────
+# ── Local extraction ───────────────────────────────────────────────────────────
 def get_previous_recap() -> Optional[Path]:
     """Return the most recent recap file for session context, if any."""
     recaps = sorted(RECAPS_DIR.glob("*_recap.md"), key=os.path.getmtime)
     return recaps[-1] if recaps else None
 
 
-def remote_extraction(transcript_path: Path, previous_recap: Optional[Path] = None) -> Path:
-    print(f"Uploading transcript to {REMOTE_TRANSCRIPT_DIR}...")
-    subprocess.run(["ssh", SSH_USER_HOST, f"mkdir -p {REMOTE_TRANSCRIPT_DIR}"], check=True)
-    subprocess.run(["scp", str(transcript_path), f"{SSH_USER_HOST}:{REMOTE_TRANSCRIPT_DIR}"], check=True)
+def local_extraction(transcript_path: Path, previous_recap: Optional[Path] = None) -> Path:
+    import extract_data as _extract_data
 
-    context_arg = ""
-    if previous_recap and previous_recap.exists():
-        remote_context_path = f"{REMOTE_TRANSCRIPT_DIR}{previous_recap.name}"
-        print(f"Uploading previous session context: {previous_recap.name}...")
-        subprocess.run(["scp", str(previous_recap), f"{SSH_USER_HOST}:{remote_context_path}"], check=True)
-        context_arg = f" --context {remote_context_path}"
+    context_path = str(previous_recap) if previous_recap and previous_recap.exists() else None
+    allies_path = str(ALLIES_FILE) if ALLIES_FILE.exists() else None
 
-    allies_arg = ""
-    if ALLIES_FILE.exists():
-        remote_allies_path = f"{REMOTE_TRANSCRIPT_DIR}allies.md"
-        print("Uploading allies roster...")
-        subprocess.run(["scp", str(ALLIES_FILE), f"{SSH_USER_HOST}:{remote_allies_path}"], check=True)
-        allies_arg = f" --allies {remote_allies_path}"
-
-    if RULES_PRIMER_FILE.exists():
-        print("Uploading D&D rules primer...")
-        subprocess.run(["scp", str(RULES_PRIMER_FILE), f"{SSH_USER_HOST}:{REMOTE_SCRIPT_DIR}"], check=True)
-
-    # Ship the player roster on every run so extract_data.py builds its prompts
-    # from the current campaign's party rather than any stale remote copy.
-    print("Uploading player roster...")
-    subprocess.run(["scp", str(PROJECT_ROOT / "players.json"), f"{SSH_USER_HOST}:{REMOTE_SCRIPT_DIR}"], check=True)
-
-    print(f"Executing remote extraction script: {REMOTE_SCRIPT}...")
-    remote_command = f"python3 {REMOTE_SCRIPT} {REMOTE_TRANSCRIPT_DIR}{transcript_path.name}{context_arg}{allies_arg}"
-    subprocess.run(["ssh", SSH_USER_HOST, remote_command], check=True)
-
-    print("Retrieving session_data.json from llmbox...")
-    subprocess.run(["scp", f"{SSH_USER_HOST}:{REMOTE_SESSION_JSON}", str(LOCAL_SESSION_JSON)], check=True)
+    print("Running local LLM extraction...")
+    _extract_data.extract_data(str(transcript_path), context_path, allies_path)
     return LOCAL_SESSION_JSON
 
 
@@ -421,7 +388,7 @@ def run_pipeline(session_date: Optional[str] = None):
 
     transcript_path = write_transcripts(all_segments)
 
-    json_path = remote_extraction(transcript_path, get_previous_recap())
+    json_path = local_extraction(transcript_path, get_previous_recap())
     with open(json_path, 'r', encoding='utf-8') as f:
         session_data = json.load(f)
 

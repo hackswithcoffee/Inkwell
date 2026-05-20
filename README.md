@@ -21,8 +21,8 @@ The pipeline turns a raw multi-track Discord recording into a finished session c
 2. **Download the recording.** When the session ends, download the multi-track `.zip` archive from Craigbot.
 3. **Drop the zip into `recordings/`.** This is the single trigger for the rest of the pipeline.
 4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically into a single `transcript_raw.md` so dialogue flows in real time across speakers.
-5. **Hand-off to the remote LLM.** The pipeline `scp`s the transcript to the llmbox and invokes `extract_data.py` over SSH. On the llmbox, `mistral-nemo:12b` (via Ollama) reads the full transcript in one pass and produces a structured `session_data.json` containing the diary entry plus the categorized extractions (decisions, NPCs, enemies, lore, loot).
-6. **Retrieve and persist.** The pipeline pulls `session_data.json` back, writes a dated `mm_dd_yyyy_recap.md` to `recaps/`, and appends the new findings to the running `lore/world_lore.md`, `npcs/npcs.md`, and related tracking files.
+5. **Local LLM extraction.** `extract_data.py` runs against a local Ollama instance: `mistral-nemo:12b` reads the transcript in chunks and synthesizes Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, NPCs, lore, loot, and allies.
+6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `recaps/`, and appends the new findings to the running `lore/world_lore.md`, `npcs/npcs.md`, and `allies/allies.md`.
 7. **Archive the source.** The original `.zip` is moved into `archive/` (renamed to the session date) and the extracted audio is deleted to reclaim disk.
 
 ## Recap format
@@ -37,44 +37,25 @@ Each `mm_dd_yyyy_recap.md` written to `recaps/` is structured as:
 
 ## Requirements
 
-### Architecture
+Inkwell runs entirely on a single machine. Both transcription and LLM inference happen locally.
 
-Inkwell is a two-machine pipeline:
-
-- **Local machine** handles I/O and audio work — audio decoding, whisper transcription, file management, and writing the final markdown artifacts.
-- **Remote llmbox** handles inference — running the LLM that turns the transcript into structured output.
-
-The two communicate over SSH: the local machine pushes the transcript with `scp`, runs the extraction script remotely with `ssh`, and pulls the JSON result back with `scp`. Nothing else moves between them.
-
-### Local dependencies
+### Dependencies
 
 - Apple Silicon Mac — `mlx-whisper` uses the MLX backend and requires Apple Silicon
 - Python 3.9+
 - Packages listed in `requirements.txt`: `mlx-whisper`, `librosa`, `soundfile`, `pydub`, `pydantic`, `python-dotenv`
-- An SSH client (built into macOS) with key-based access to the llmbox
-
-### Remote llmbox dependencies
-
-- A Linux or macOS host reachable over SSH
-- [Ollama](https://ollama.com) running and serving on port 11434
-- Models pulled: `mistral-nemo:12b` (narrative) and `mistral:7b` (extraction)
-- The `extract_data.py` script deployed somewhere on the host, with a Python 3 runtime available to execute it
+- [Ollama](https://ollama.com) running locally on port 11434
+- Models pulled into Ollama: `mistral-nemo:12b` (narrative) and `mistral:7b` (extraction)
 
 ### Environment variables
 
-Copy `.env.example` to `.env` and fill in:
+Copy `.env.example` to `.env`. The only variable is:
 
 | Variable | Purpose |
 |---|---|
-| `OLLAMA_HOST` | URL of Ollama on the llmbox, e.g. `http://10.0.0.5:11434` |
-| `SSH_USER_HOST` | SSH target for the llmbox, e.g. `user@10.0.0.5` |
-| `REMOTE_INKWELL_DIR` | Absolute path to the Inkwell deployment on the llmbox, e.g. `/home/you/projects/inkwell`. The pipeline derives `transcripts/` and `scripts/` from this base. |
+| `OLLAMA_HOST` | URL of the local Ollama service — defaults to `http://localhost:11434` |
 
 ## Setup
-
-### Local machine
-
-On a fresh clone:
 
 ```bash
 git clone git@github.com:hackswithcoffee/Inkwell.git
@@ -84,43 +65,23 @@ cd Inkwell
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# Environment variables
+# Environment
 cp .env.example .env
-# Edit .env and fill in OLLAMA_HOST, SSH_USER_HOST, REMOTE_INKWELL_DIR
 
-# Party roster
+# Party roster — map your Discord usernames to character names
 cp players.example.json players.json
-# Edit players.json to map your Discord usernames to character names
+# Edit players.json
+
+# Install Ollama and pull the models
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull mistral-nemo:12b
+ollama pull mistral:7b
 
 # Sanity check — runs all the startup validators without doing real work
 .venv/bin/python -c "import scribe_pipeline; print('Ready')"
 ```
 
 Data folders (`recordings/`, `recaps/`, `lore/`, `npcs/`, `allies/`, `archive/`) are created automatically on first run.
-
-### Remote llmbox
-
-The pipeline expects an llmbox reachable over SSH from your local machine:
-
-```bash
-# On the llmbox
-# 1. Install Ollama and pull the models
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull mistral-nemo:12b
-ollama pull mistral:7b
-
-# 2. Deploy the extraction script at REMOTE_INKWELL_DIR/scripts/extract_data.py
-mkdir -p /home/you/projects/inkwell/scripts
-# (copy extract_data.py into that directory)
-
-# 3. Make sure your local SSH public key is in ~/.ssh/authorized_keys
-```
-
-Your local `SSH_USER_HOST` and `REMOTE_INKWELL_DIR` in `.env` must match the user/host and path you used on the llmbox.
-
-`extract_data.py` defaults to `http://localhost:11434` for the Ollama service. If Ollama runs on a different host or port on the llmbox, set the `OLLAMA_HOST` environment variable in your shell or systemd unit there.
-
-`scribe_pipeline.py` ships `players.json` and `summarizer_primer.md` to the llmbox automatically on every run, so you only need to deploy `extract_data.py` once. Update `players.json` locally when your party changes — the next run will carry it over.
 
 ## Usage
 
@@ -152,9 +113,9 @@ If you keep a personal `.claude/CLAUDE.md` skill definition for this project, yo
 
 ## Layout
 
-- `scribe_pipeline.py` — orchestrates the local → remote → local flow
-- `extract_data.py` — runs on the llmbox; invoked via SSH from the pipeline
-- `summarizer_primer.md` — D&D rules cheat sheet shipped to the llmbox to ground the summarizer
+- `scribe_pipeline.py` — orchestrates the audio → transcription → extraction → persistence flow
+- `extract_data.py` — calls Ollama to produce the diary entry and structured session data
+- `summarizer_primer.md` — D&D rules cheat sheet that grounds the summarizer's terminology
 - `dnd rules/` — SRD reference content used by the primer
 - `recordings/` — drop new Craigbot `.zip` files here
 - `recaps/`, `lore/`, `npcs/`, `allies/` — generated and maintained artifacts

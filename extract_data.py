@@ -6,9 +6,7 @@ import urllib.error
 import re
 import argparse
 
-# extract_data.py runs on the llmbox alongside Ollama, so the default reaches
-# the locally-running Ollama service. Override with an environment variable if
-# Ollama is on a different host or port.
+# Override OLLAMA_HOST if Ollama is on a different host or port.
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 NARRATIVE_MODEL = "mistral-nemo:12b"
 EXTRACTION_MODEL = "mistral:7b"
@@ -32,13 +30,12 @@ def load_rules_primer() -> str:
 def _load_players() -> dict:
     """Load the Discord-username → character mapping from players.json.
 
-    Refuses to run if missing. The file is shipped to the llmbox by
-    scribe_pipeline.py on each run, alongside the rules primer.
+    Refuses to run if missing. players.json must live in the same directory as this script.
     """
     players_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "players.json")
     if not os.path.exists(players_path):
         print(f"Missing players.json at {players_path}", file=sys.stderr)
-        print("scribe_pipeline.py should ship this file to the llmbox on every run.", file=sys.stderr)
+        print("Copy players.example.json to players.json and fill in your party.", file=sys.stderr)
         sys.exit(1)
     with open(players_path, "r", encoding="utf-8") as f:
         return json.load(f)
