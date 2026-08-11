@@ -110,27 +110,37 @@ def _ensure_directories() -> None:
 _ensure_directories()
 
 def _load_discord_mapping() -> dict:
-    """Load the Discord-username → character mapping from players.json.
+    """Load the Discord-username → name mapping from players.json.
 
-    The file is gitignored so each user maintains their own party roster
-    without leaking real names into version control. Refuses to run if the
-    file is missing, with instructions to copy players.example.json.
+    Delegates to extract_data.load_players so both entry points share one
+    definition of what a valid roster looks like. The file is gitignored, so
+    each user keeps their own party roster out of version control.
     """
-    players_path = PROJECT_ROOT / "players.json"
-    if not players_path.exists():
-        print("Missing players.json — the Discord-to-character mapping for your party.", file=sys.stderr)
-        print("Copy players.example.json to players.json and fill in your party.", file=sys.stderr)
-        sys.exit(1)
-    return json.loads(players_path.read_text())
+    from extract_data import load_players
+    return load_players(PROJECT_ROOT / "players.json")
 
 
 DISCORD_MAPPING = _load_discord_mapping()
 
 
+def _display_names(mapping: dict) -> dict:
+    """Precompute the name each Discord username should appear as in transcripts.
+
+    Keeps the parenthetical out of the label, so "Caeli (Daniel)" reads as
+    "Caeli" and "(Neil)" reads as "Neil" rather than leaking stray punctuation
+    into the text the summarizer sees.
+    """
+    from extract_data import parse_player_entry
+    return {k: parse_player_entry(v)[0] for k, v in mapping.items()}
+
+
+SPEAKER_NAMES = _display_names(DISCORD_MAPPING)
+
+
 def speaker_label(stem: str) -> str:
-    """Map a Craig track stem to a character label, ignoring Craig's join-order prefix."""
+    """Map a Craig track stem to a display name, ignoring Craig's join-order prefix."""
     base = re.sub(r"^\d+-", "", stem)
-    return DISCORD_MAPPING.get(base, stem)
+    return SPEAKER_NAMES.get(base, stem)
 
 NOISE_PHRASES = {
     "you", "you you", "i'm sorry", "okay", "chapter",
@@ -169,7 +179,13 @@ def transcribe_tracks(temp_dir: Path) -> list:
         if not (item.is_file() and item.suffix.lower() in AUDIO_EXTENSIONS):
             continue
         speaker = item.stem
-        print(f"Transcribing track for: {speaker}")
+        if re.sub(r"^\d+-", "", speaker) not in SPEAKER_NAMES:
+            print(
+                f"Warning: no players.json entry for '{speaker}' — this track will be "
+                "labeled with the raw Discord username. Add it to players.json.",
+                file=sys.stderr,
+            )
+        print(f"Transcribing track for: {speaker_label(speaker)}")
         result = mlx_whisper.transcribe(str(item), path_or_hf_repo=WHISPER_MODEL, word_timestamps=True)
         for seg in result.get('segments', []):
             all_segments.append({
@@ -332,15 +348,20 @@ def update_allies_roster(allies: list, display_date: str) -> None:
         return
     existing = ALLIES_FILE.read_text(encoding="utf-8") if ALLIES_FILE.exists() else ALLIES_ROSTER_HEADER
     for ally in allies:
-        name = ally.get("name", "").strip()
-        status = ally.get("status", "Unknown").strip()
-        notes = ally.get("notes", "").strip()
+        if not isinstance(ally, dict):
+            continue
+        name = str(ally.get("name", "")).strip()
+        status = str(ally.get("status", "Unknown")).strip() or "Unknown"
+        notes = str(ally.get("notes", "")).strip()
         if not name:
             continue
-        if name.lower() in existing.lower():
+        # Match on the ally's own heading, not a bare substring — "Al" must not
+        # be treated as an update to an existing "Alchemist".
+        heading = re.compile(rf"^## {re.escape(name)}\s*$", re.MULTILINE | re.IGNORECASE)
+        if heading.search(existing):
             # Splice a session update under the existing ally heading
             update_line = f"\n**Session {display_date}:** {notes} *(Status: {status})*"
-            pattern = re.compile(rf"(## {re.escape(name)}.*?)(\n---|\n## |\Z)", re.DOTALL | re.IGNORECASE)
+            pattern = re.compile(rf"(^## {re.escape(name)}\s*$.*?)(\n---|\n## |\Z)", re.DOTALL | re.MULTILINE | re.IGNORECASE)
             match = pattern.search(existing)
             if match:
                 insert_pos = match.end(1)

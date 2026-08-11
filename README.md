@@ -8,8 +8,8 @@ What Inkwell keeps track of:
 - **Key decisions** — major choices the party made (allegiances, refusals, bargains)
 - **World lore** — places, factions, history, and any new details about the setting as they're revealed
 - **NPCs** — names, descriptions, and roleplay summaries for everyone the party meets
-- **Enemies** — creatures and adversaries encountered, separate from neutral or friendly NPCs
-- **Inventory & loot** — items awarded to the party, rewards, and notable gear changes
+- **Allies** — a running roster of characters travelling with the party, with their status tracked across sessions
+- **Loot & purchases** — items recovered in the field, kept separate from anything bought from a merchant
 
 The result is a living archive of the campaign that grows on its own — useful for catching up after a missed session, for the DM's continuity, and for feeding into other tools (e.g. NotebookLM) as source material.
 
@@ -20,8 +20,8 @@ The pipeline turns a raw multi-track Discord recording into a finished session c
 1. **Record the session in Discord.** Add the [Craigbot](https://craig.chat/) recording bot to the party's Discord server and have it record the voice channel for the duration of the session. Craigbot produces one audio track per speaker.
 2. **Download the recording.** When the session ends, download the multi-track `.zip` archive from Craigbot.
 3. **Drop the zip into `recordings/`.** This is the single trigger for the rest of the pipeline.
-4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically into a single `transcript_raw.md` so dialogue flows in real time across speakers.
-5. **Local LLM extraction.** `extract_data.py` runs against a local Ollama instance: `mistral-nemo:12b` reads the transcript in chunks and synthesizes Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, NPCs, lore, loot, and allies.
+4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically so dialogue flows in real time across speakers. Two files are written: `transcript_raw.md` (everything, verbatim) and `transcript_cleaned.md`, which drops Whisper hallucination noise — stock filler phrases, sub-half-second fragments with no substantive word, a speaker's third consecutive repeat of the same line, and single-word loops. The cleaned transcript is what gets summarized.
+5. **Local LLM extraction.** `extract_data.py` runs against a local Ollama instance in three passes: `mistral-nemo:12b` summarizes the transcript in ~2000-word chunks, then synthesizes those summaries into Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies. If a chunk fails against the narrative model it is retried against the extraction model; if every chunk fails the run aborts rather than writing an empty recap.
 6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `recaps/`, and appends the new findings to the running `lore/world_lore.md`, `npcs/npcs.md`, and `allies/allies.md`.
 7. **Archive the source.** The original `.zip` is moved into `archive/` (renamed to the session date) and the extracted audio is deleted to reclaim disk.
 
@@ -43,7 +43,8 @@ Inkwell runs entirely on a single machine. Both transcription and LLM inference 
 
 - Apple Silicon Mac — `mlx-whisper` uses the MLX backend and requires Apple Silicon
 - Python 3.9+
-- Packages listed in `requirements.txt`: `mlx-whisper`, `librosa`, `soundfile`, `pydub`, `pydantic`, `python-dotenv`
+- `ffmpeg` on your `PATH` — `mlx-whisper` shells out to it to decode audio (`brew install ffmpeg`)
+- Packages listed in `requirements.txt`: `mlx-whisper` and `python-dotenv` (plus their own transitive dependencies)
 - [Ollama](https://ollama.com) running locally on port 11434
 - Models pulled into Ollama: `mistral-nemo:12b` (narrative) and `mistral:7b` (extraction)
 
@@ -54,6 +55,21 @@ Copy `.env.example` to `.env`. The only variable is:
 | Variable | Purpose |
 |---|---|
 | `OLLAMA_HOST` | URL of the local Ollama service — defaults to `http://localhost:11434` |
+
+`.env` must exist and set every key present in `.env.example`; the pipeline refuses to start otherwise, even though the code has its own default.
+
+### Party roster
+
+`players.json` (gitignored) maps each bare Discord username to the name that person should be called in the chronicle. Craig prefixes track filenames with a join order (`1-`, `2-`); that prefix is stripped before lookup, so it does not belong in the key.
+
+| Value | Meaning |
+|---|---|
+| `Caeli (Daniel)` | Character Caeli, played by Daniel — the chronicle uses "Caeli" |
+| `Andrew` | No character name yet — the chronicle uses "Andrew" |
+| `(Andrew)` | Same as above; a blank name falls back to the parenthetical |
+| `Jeff (DM)` | The Dungeon Master — excluded from the party list |
+
+The name outside the parentheses wins. An entry that yields no usable name at all is a hard error, so a half-filled row can't silently drop a player from the party.
 
 ## Setup
 
@@ -68,7 +84,7 @@ python3 -m venv .venv
 # Environment
 cp .env.example .env
 
-# Party roster — map your Discord usernames to character names
+# Party roster — map each Discord username to the name to call that person
 cp players.example.json players.json
 # Edit players.json
 
@@ -97,11 +113,12 @@ The pipeline picks up the most recent `.zip` in `recordings/` and processes that
 
 ## Operational behavior
 
-- **Size guard:** `.zip` files larger than 2GB are refused unless explicitly confirmed.
-- **Source archival:** After a successful run, the source `.zip` is moved into `archive/` and renamed to the session date (`mm_dd_yyyy.zip`). Extracted audio in `temp_audio/` is deleted to reclaim disk.
+- **Size guard:** `.zip` files larger than 2GB are refused outright and the run stops.
+- **Source archival:** After a successful run, the source `.zip` is moved into `archive/` and renamed to the session date (`mm_dd_yyyy.zip`). Extracted audio in `temp_audio/` is deleted to reclaim disk, along with the intermediate `session_data.json`. Cleanup happens at the very end — if a run fails partway, the audio is left in place.
 - **Overlap handling:** When speakers overlap during a session, both segments are preserved in the order they started — no truncation of cross-talk.
-- **Out-of-character filtering:** Scheduling chatter, audio glitches, and fourth-wall breaks are filtered out at the LLM extraction step and do not appear in the recap.
-- **Real names:** The recap and diary entry refer to players by character name only. Real names exist exclusively in `players.json` (gitignored), which maps Discord usernames to `Character (Real Name)`. Copy `players.example.json` to `players.json` to set up your party, and update it when the party composition changes.
+- **Out-of-character filtering:** Scheduling chatter, audio glitches, and fourth-wall breaks are filtered out at the LLM extraction step and do not appear in the recap. Mechanical transcription noise is filtered earlier, when the cleaned transcript is written.
+- **Continuity:** The most recently modified recap in `recaps/` is passed to the extractor as context for the next session, along with the current allies roster.
+- **Names:** Discord usernames never appear in a recap — the extractor is given the list from `players.json` and told to exclude them. Character names and real names are both fine, so a player whose character isn't named yet is still written about by their given name. A track with no `players.json` entry falls back to its raw Discord username as the speaker label and warns during transcription; add the entry rather than letting it reach a recap.
 
 ## Layout
 
@@ -109,9 +126,11 @@ The pipeline picks up the most recent `.zip` in `recordings/` and processes that
 - `extract_data.py` — calls Ollama to produce the diary entry and structured session data
 - `summarizer_primer.md` — D&D rules cheat sheet that grounds the summarizer's terminology
 - `dnd rules/` — SRD reference content used by the primer
+- `players.json` — your party roster (gitignored; copy from `players.example.json`)
 - `recordings/` — drop new Craigbot `.zip` files here
 - `recaps/`, `lore/`, `npcs/`, `allies/` — generated and maintained artifacts
 - `archive/` — processed `.zip` files, renamed to the session date
+- `temp_audio/`, `transcript_raw.md`, `transcript_cleaned.md`, `session_data.json` — working files produced during a run; all but the transcripts are cleaned up on success
 
 ## License
 
