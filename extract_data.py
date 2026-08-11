@@ -203,8 +203,15 @@ def to_allies(val, exclude=()) -> list:
     `exclude` drops party members and the DM. The extraction model reliably
     mistakes a downed-then-revived player for an allied NPC, and once a player
     lands in allies.md they are tracked there for the rest of the campaign.
+
+    Matching is whole-word, not exact-string — the model sometimes names the
+    "ally" entry after a player's character concept instead of their name
+    (e.g. "Neil's Tinkerer Character"), which an exact match would miss.
     """
-    excluded = {str(n).strip().lower() for n in exclude if str(n).strip()}
+    excluded_patterns = [
+        re.compile(r"\b" + re.escape(str(n).strip()) + r"\b", re.IGNORECASE)
+        for n in exclude if str(n).strip()
+    ]
     allies = []
     for item in val if isinstance(val, list) else []:
         if isinstance(item, dict):
@@ -215,7 +222,7 @@ def to_allies(val, exclude=()) -> list:
             name, status, notes = item.strip(), "Unknown", ""
         else:
             continue
-        if not name or name.lower() in excluded:
+        if not name or any(p.search(name) for p in excluded_patterns):
             continue
         allies.append({"name": name, "status": status, "notes": notes})
     return allies
@@ -310,6 +317,23 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
         "a PLAN, not an event. Summarize it as 'the party decided/planned to...' — never write it as "
         "something that already occurred. Only describe an action as having happened if the transcript "
         "actually shows it happening, not merely being discussed as a next step.\n\n"
+        "WHO SAID WHAT IS GROUND TRUTH, NOT A GUESS — every line below is already labeled with the real "
+        "speaker (each player was recorded on their own separate audio track, so this labeling is exact, "
+        "not inferred). Never treat 'who is this about' as unknowable when the labels can answer it. When "
+        "the DM describes a character concept without naming the player, resolve whose it is like this:\n"
+        "  1. Does a player's OWN labeled line state the detail about themselves? That's confirmed.\n"
+        "  2. Does a player respond right after the DM's description — even briefly, even just 'yeah' — "
+        "in a way that reads as claiming or confirming it? That speaker's label is your answer.\n"
+        "  3. Keep tracking the SAME concept across the whole section, not just the next line. A short, "
+        "noncommittal reply next to a description is weak evidence on its own — but if a player is tied "
+        "to that same concept explicitly and unambiguously LATER in this section (the DM names them "
+        "directly, or they describe it themselves in different words), that later line resolves the "
+        "earlier ambiguity. Attribute the whole concept to that player, in both places.\n"
+        "  4. Only if you check all of this and there is truly no player anywhere in this section who "
+        "claims or is tied to the detail — leave it unattached. Don't stop at the first ambiguous line "
+        "and give up; read on before concluding it's unresolvable.\n"
+        "Attaching a real detail to the wrong labeled speaker is just as much a grounding failure as "
+        "inventing a detail from nothing — the label was right there.\n\n"
         "When in-game content IS present, include (only what actually happened — see PLANS ARE NOT EVENTS above):\n"
         "- Any battle actually fought (not merely threatened or planned): name the enemy types (goblins, cultists, skeletons, beholders, etc.)\n"
         "- How each fight played out and who did what\n"
@@ -436,6 +460,13 @@ RULES:
   would demand." and STOP.
   INCORRECT — do not continue: "Under cover of darkness, they slipped past the guards, Neil's
   deft fingers making short work of the lock..." — none of that is known to have happened.
+- DO NOT GUESS WHO: only attach a race, class, item, backstory detail, or line of dialogue to a
+  specific named character if the summaries clearly say it's theirs. If the summaries mention a
+  detail without saying whose it is, or you're not sure which of several characters it belongs to,
+  leave it unattached rather than pick a plausible-sounding name — a real detail on the wrong
+  character is just as much a failure as an invented one, and it's worse because it reads as
+  confident and correct. When in doubt, write around the ambiguity instead of resolving it with
+  a guess.
 - Cover the real events described in the summaries below — do not skip any that are present
 - Write immersive, vivid fantasy prose — length follows from how much actually happened, not a fixed target
 - You are Inkwell — a WITNESS and RECORDER, not a party member
@@ -509,6 +540,7 @@ Return ONLY a raw JSON object (no markdown fences) with exactly these keys:
 Rules for allies:
 - An ally is an NPC who travels with, fights alongside, or actively aids the party.
 - NEVER list a party member as an ally. The party members are named above — they are the heroes, not their allies. A party member who was downed, healed, or rescued is still a party member.
+- This applies no matter how the entry is named. A character-concept description of a party member — "Neil's Tinkerer Character", "Caeli's Herbalist Character" — is still Neil or Caeli, not a separate NPC. If the "ally" you're about to list is really one of the party members under a different label, don't list it.
 - NEVER list the Dungeon Master as an ally.
 
 Rules for loot_found and purchases:
