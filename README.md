@@ -119,6 +119,7 @@ The pipeline picks up the most recent `.zip` in `recordings/` and processes that
 - **Out-of-character filtering:** Scheduling chatter, audio glitches, and fourth-wall breaks are filtered out at the LLM extraction step and do not appear in the recap. Mechanical transcription noise is filtered earlier, when the cleaned transcript is written.
 - **Continuity:** The most recently modified recap in `recaps/` is passed to the extractor as context for the next session, along with the current allies roster.
 - **Names:** Discord usernames never appear in a recap — the extractor is given the list from `players.json` and told to exclude them. Character names and real names are both fine, so a player whose character isn't named yet is still written about by their given name. A track with no `players.json` entry falls back to its raw Discord username as the speaker label and warns during transcription; add the entry rather than letting it reach a recap.
+- **External sync:** If `DRIVE_SYNC_DIR` is set in `.env`, the session's recap and the current `allies.md`, `npcs.md`, and `world_lore.md` are copied there after every successful run — useful for feeding a synced folder into an external tool (e.g. a NotebookLM/Gemini notebook). Optional; a missing or unmounted folder warns but doesn't fail the run.
 
 ## Layout
 

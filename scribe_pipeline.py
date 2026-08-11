@@ -88,6 +88,12 @@ CLEANED_TRANSCRIPT = PROJECT_ROOT / "transcript_cleaned.md"
 LOCAL_SESSION_JSON = PROJECT_ROOT / "session_data.json"
 RULES_PRIMER_FILE = PROJECT_ROOT / "summarizer_primer.md"
 
+# Optional: local folder synced by the Google Drive desktop client. If set, the
+# recap and the three running master files are copied there after every
+# successful run, for feeding into external tools (e.g. a NotebookLM/Gemini
+# notebook). Not required — the pipeline runs fine without it.
+DRIVE_SYNC_DIR = os.environ.get("DRIVE_SYNC_DIR")
+
 
 def _ensure_directories() -> None:
     """Create the local directories the pipeline reads from or writes to.
@@ -378,6 +384,26 @@ def update_allies_roster(allies: list, display_date: str) -> None:
     ALLIES_FILE.write_text(existing, encoding="utf-8")
 
 
+def sync_to_drive(recap_path: Path) -> None:
+    """Copy the recap and the three running master files to DRIVE_SYNC_DIR, if set.
+
+    Non-fatal by design: this feeds an external notebook tool, it isn't part of
+    the pipeline's own record-keeping. A missing/unmounted Drive folder should
+    warn, not blow up a run that already succeeded and archived the source zip.
+    """
+    if not DRIVE_SYNC_DIR:
+        return
+    drive_dir = Path(DRIVE_SYNC_DIR)
+    try:
+        drive_dir.mkdir(parents=True, exist_ok=True)
+        for src in (recap_path, ALLIES_FILE, NPCS_FILE, LORE_FILE):
+            if src.exists():
+                shutil.copy2(src, drive_dir / src.name)
+        print(f"Synced recap, allies, npcs, and lore to {drive_dir}")
+    except OSError as e:
+        print(f"Warning: could not sync to {drive_dir}: {e}", file=sys.stderr)
+
+
 def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str) -> None:
     shutil.move(str(zip_file), ARCHIVE_DIR / f"{date_str}.zip")
     shutil.rmtree(temp_dir)
@@ -419,6 +445,7 @@ def run_pipeline(session_date: Optional[str] = None):
 
     append_lore_and_npcs(session_data, date_str)
     update_allies_roster(session_data.get("allies", []), display_date)
+    sync_to_drive(recap_path)
     cleanup(zip_file, temp_dir, json_path, date_str)
 
     print("Inkwell Processing Complete!")
