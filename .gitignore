@@ -20,6 +20,10 @@ archive/
 recordings/
 *.bak.*
 pipeline.log
+craig_watcher.log
+craig_watcher_launchd.log
+.craig_watcher_state
+.craig_watcher.lock
 
 # Campaign data — backed up separately, not in the code repo
 recaps/
