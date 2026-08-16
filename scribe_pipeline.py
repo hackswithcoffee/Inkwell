@@ -83,6 +83,7 @@ RECAPS_DIR = PROJECT_ROOT / "recaps"
 LORE_FILE = PROJECT_ROOT / "lore" / "world_lore.md"
 NPCS_FILE = PROJECT_ROOT / "npcs" / "npcs.md"
 ALLIES_FILE = PROJECT_ROOT / "allies" / "allies.md"
+CHARACTERS_DIR = PROJECT_ROOT / "characters"
 RAW_TRANSCRIPT = PROJECT_ROOT / "transcript_raw.md"
 CLEANED_TRANSCRIPT = PROJECT_ROOT / "transcript_cleaned.md"
 LOCAL_SESSION_JSON = PROJECT_ROOT / "session_data.json"
@@ -109,6 +110,7 @@ def _ensure_directories() -> None:
         LORE_FILE.parent,
         NPCS_FILE.parent,
         ALLIES_FILE.parent,
+        CHARACTERS_DIR,
     ):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -384,6 +386,41 @@ def update_allies_roster(allies: list, display_date: str) -> None:
     ALLIES_FILE.write_text(existing, encoding="utf-8")
 
 
+def character_file(name: str) -> Path:
+    """Path to a character's chronicle file, derived from their name."""
+    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_") or "unnamed"
+    return CHARACTERS_DIR / f"{slug}.md"
+
+
+def update_character_files(developments: list, date_str: str) -> None:
+    """Append this session's developments to each character's own chronicle.
+
+    One file per party member, appended to over the life of the campaign so
+    each character accumulates a readable arc — who they were, what they chose,
+    how they changed — rather than that history living scattered across recaps.
+
+    Only appends. A character's hand-written origin section is never rewritten,
+    and a character with nothing notable this session is left untouched rather
+    than padded with an empty entry.
+    """
+    if not developments:
+        return
+    CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
+    for entry in developments:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip()
+        development = str(entry.get("development", "")).strip()
+        if not name or not development:
+            continue
+        path = character_file(name)
+        if not path.exists():
+            path.write_text(f"# {name}\n\n---\n", encoding="utf-8")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"\n## Update {date_str}\n{development}\n")
+    print(f"Updated {len(developments)} character file(s) in {CHARACTERS_DIR}")
+
+
 def sync_to_drive(recap_path: Path) -> None:
     """Copy the recap and the three running master files to DRIVE_SYNC_DIR, if set.
 
@@ -396,10 +433,21 @@ def sync_to_drive(recap_path: Path) -> None:
     drive_dir = Path(DRIVE_SYNC_DIR)
     try:
         drive_dir.mkdir(parents=True, exist_ok=True)
-        for src in (recap_path, ALLIES_FILE, NPCS_FILE, LORE_FILE):
+        sources = [recap_path, ALLIES_FILE, NPCS_FILE, LORE_FILE]
+        # Character chronicles go into their own subfolder so they stay
+        # distinguishable from the master files in the notebook.
+        char_files = sorted(CHARACTERS_DIR.glob("*.md")) if CHARACTERS_DIR.exists() else []
+        if char_files:
+            char_dest = drive_dir / "characters"
+            char_dest.mkdir(parents=True, exist_ok=True)
+            for src in char_files:
+                shutil.copy2(src, char_dest / src.name)
+        for src in sources:
             if src.exists():
                 shutil.copy2(src, drive_dir / src.name)
-        print(f"Synced recap, allies, npcs, and lore to {drive_dir}")
+        print(
+            f"Synced recap, allies, npcs, lore, and {len(char_files)} character file(s) to {drive_dir}"
+        )
     except OSError as e:
         print(f"Warning: could not sync to {drive_dir}: {e}", file=sys.stderr)
 
@@ -445,6 +493,7 @@ def run_pipeline(session_date: Optional[str] = None):
 
     append_lore_and_npcs(session_data, date_str)
     update_allies_roster(session_data.get("allies", []), display_date)
+    update_character_files(session_data.get("character_developments", []), date_str)
     sync_to_drive(recap_path)
     cleanup(zip_file, temp_dir, json_path, date_str)
 

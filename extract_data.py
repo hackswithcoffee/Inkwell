@@ -228,6 +228,42 @@ def to_allies(val, exclude=()) -> list:
     return allies
 
 
+def to_character_developments(val, roster=()) -> list:
+    """Normalize per-character developments, keeping ONLY real party members.
+
+    The inverse of to_allies: an entry survives only if its name matches
+    someone on the roster. This keeps NPCs, the DM, and invented names from
+    creating stray character files, and resolves loose forms the model
+    produces ("Caeli's character", "Bramble") back to the canonical roster
+    name so a character's history stays in one file instead of fragmenting.
+    """
+    canonical = [str(n).strip() for n in roster if str(n).strip()]
+    developments = []
+    seen = set()
+    for item in val if isinstance(val, list) else []:
+        if not isinstance(item, dict):
+            continue
+        raw_name = str(item.get("name", "")).strip()
+        development = to_text(item.get("development", ""))
+        if not raw_name or not development:
+            continue
+        # Resolve to a roster name: exact match first, then whole-word containment
+        # either direction ("Bramble" -> "Bramble Goran", "Caeli's character" -> "Caeli").
+        match = next((c for c in canonical if c.lower() == raw_name.lower()), None)
+        if match is None:
+            match = next(
+                (c for c in canonical
+                 if re.search(r"\b" + re.escape(c) + r"\b", raw_name, re.IGNORECASE)
+                 or re.search(r"\b" + re.escape(raw_name) + r"\b", c, re.IGNORECASE)),
+                None,
+            )
+        if match is None or match in seen:
+            continue
+        seen.add(match)
+        developments.append({"name": match, "development": development})
+    return developments
+
+
 def chunk_transcript(transcript_content: str, chunk_size: int = CHUNK_SIZE_WORDS) -> list:
     """Split transcript into chunks of approximately chunk_size words, breaking at speaker lines."""
     lines = transcript_content.split("\n")
@@ -279,6 +315,12 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
     party_note, DIARY_PRIMER, usernames_str = _build_party_context(players)
     # Everyone at the table — used to keep players out of the allies roster.
     roster_names = {parse_player_entry(v)[0] for v in players.values() if parse_player_entry(v)[0]}
+    # Party only — the DM gets no character file and no development entries.
+    party_names = {
+        parse_player_entry(v)[0]
+        for v in players.values()
+        if parse_player_entry(v)[0] and not parse_player_entry(v)[2]
+    }
 
     rules_primer = load_rules_primer()
     primer_block = f"\n\n--- D&D RULES PRIMER (use to interpret transcript correctly) ---\n{rules_primer}\n--- END RULES PRIMER ---" if rules_primer else ""
@@ -311,6 +353,17 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
         "sheet mechanics, scheduling — say so plainly (e.g. 'No in-game content in this section — the "
         "players discussed character-building mechanics.') and stop there. A short, honest summary is "
         "correct; a longer, invented one is a failure.\n\n"
+        "CHARACTER TURNING POINTS MUST SURVIVE — these are easy to compress away, so record them "
+        "explicitly, by name, whenever they appear:\n"
+        "- A character LEVELING UP, and any new spell, ability, subclass, or feature they gained. This is "
+        "character progression, NOT the 'raw mechanics' you're told to strip below — always keep it.\n"
+        "- A personal or emotional turning point: a character reacting to something in a way that matters "
+        "for who they are, a revelation about their own past or origin, a promise or bargain they enter, "
+        "a relationship formed or broken, a change in how they carry themselves.\n"
+        "- Anything that touches a condition or loss a character has been living with — if something they "
+        "lost stirs, returns, worsens, or is explained, that is one of the most important things in the "
+        "whole section. Never drop it.\n"
+        "Attribute each of these to the character by name.\n\n"
         "PLANS ARE NOT EVENTS — this trips people up constantly, watch for it: if the party discusses, "
         "agrees on, or decides on something they intend to do LATER (break into a building, travel "
         "somewhere, confront someone), and the transcript does NOT go on to depict it happening, that is "
@@ -351,7 +404,9 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
         f"- Discord usernames ({usernames_str}) — refer to people by name instead\n"
         "- Out-of-character chatter, jokes, rules debates, scheduling\n"
         "- Real-world references (holidays, technical issues)\n"
-        "- Raw mechanics (specific dice numbers, AC, hit point totals) — describe the STORY, not the math\n\n"
+        "- Raw mechanics (specific dice numbers, AC, hit point totals) — describe the STORY, not the math. "
+        "This does NOT apply to level-ups or newly gained abilities: those are character progression and "
+        "must be kept, per CHARACTER TURNING POINTS above.\n\n"
         "CRITICAL D&D mechanics you MUST get right:\n"
         "- A character at 0 HP is UNCONSCIOUS / DOWNED / DYING — NOT dead. They roll death saving throws. "
         "Three failed death saves OR a single explicit killing blow while at 0 HP results in death. "
@@ -534,8 +589,27 @@ Return ONLY a raw JSON object (no markdown fences) with exactly these keys:
       "status": "Active | Departed | Unknown",
       "notes": "brief description of their role this session"
     }}
+  ],
+  "character_developments": [
+    {{
+      "name": "party member's character name, exactly as listed in the party above",
+      "development": "what actually changed for this character this session"
+    }}
   ]
 }}
+
+Rules for character_developments:
+- This is the OPPOSITE of `allies`: it covers ONLY the party members named above, never NPCs and never the Dungeon Master.
+- Record things that shape who this character is or where their story is going: leveling up (say what level, and name any new spell/ability/subclass gained), a choice they personally made, an injury or brush with death, a promise or bargain they entered, a relationship formed or broken, something learned about their own past or origin, a personal goal taken up or abandoned, or a change in how they are regarded.
+- Pay special attention to anything touching a condition or loss the character carries — if something they lost stirs, returns, worsens, or gets explained, that is exactly what this field is for. Do not let it slip past because it was a quiet moment rather than a dramatic one.
+- If the summary says a character leveled up, that ALWAYS warrants an entry, even if nothing else happened to them.
+- Use the character's name exactly as it appears in the party list above.
+- One entry per character who did something worth recording. OMIT a character entirely if nothing notable happened to them — do not invent a development to give everyone an entry.
+- A partial or empty session for a character is NORMAL and the correct output is to leave them out. Never write filler like "kept watch", "stayed alert", "was present", "fought bravely", "assisted the party", or "continued the journey". If a character explicitly declined to act, said nothing happened for them, or simply wasn't involved, they get NO entry at all. Returning three entries for a five-person party is a good result, not an incomplete one.
+- Ask yourself for each entry: would a reader looking back at this character's whole arc care about this line? If not, drop it.
+- When a character levels up, state the level reached ("reached 2nd level") alongside what they gained, not just the new ability.
+- Write each `development` as one or two plain sentences about what happened, grounded in the summary. If the summary doesn't say it, it doesn't go here.
+- If nothing notable happened to anyone, use [].
 
 Rules for allies:
 - An ally is an NPC who travels with, fights alongside, or actively aids the party.
@@ -551,7 +625,7 @@ Rules for loot_found and purchases:
 - Gold/coin received from a quest, treasure hoard, or sold loot goes in `loot_found`. Gold spent at a shop is implicit in `purchases` and does not need its own entry.
 
 Other rules:
-- key_decisions means IN-GAME choices the characters made (allegiances, refusals, bargains, where to go). It does NOT mean real-world/meta decisions like agreeing on rules, picking character-building tools or platforms, or scheduling — those are out-of-character and must be excluded even if they were the main content of the session.
+- key_decisions means IN-GAME choices the characters made TOGETHER as a party (allegiances, refusals, bargains, where to go). It does NOT mean real-world/meta decisions like agreeing on rules, picking character-building tools or platforms, or scheduling — those are out-of-character and must be excluded even if they were the main content of the session. It also does NOT mean one character's own progression choices (which spell or subclass they picked on leveling up) — those belong in `character_developments`, not here.
 - If no decisions were notable, use [] for key_decisions
 - If nothing was found, use [] for loot_found; if nothing was purchased, use [] for purchases
 - If no allies were present, use [] for allies
@@ -594,7 +668,10 @@ SESSION SUMMARY:
         "purchases": purchases,
         "npcs": to_text(extraction.get("npcs", "")),
         "lore": to_text(extraction.get("lore", "")),
-        "allies": to_allies(extraction.get("allies", []), exclude=roster_names)
+        "allies": to_allies(extraction.get("allies", []), exclude=roster_names),
+        "character_developments": to_character_developments(
+            extraction.get("character_developments", []), roster=party_names
+        )
     }
 
     output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_data.json")
