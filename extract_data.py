@@ -126,7 +126,21 @@ def _build_party_context(players: dict) -> tuple:
 
     lines = [f"The party members are: {party_str}."]
     if dm_name:
-        lines.append(f"{dm_name} is the Dungeon Master — the voice of the world, not a party member.")
+        lines.append(
+            "One person at the table is the Dungeon Master: the voice of the world, not a party "
+            f"member. Their name is \"{dm_name}\" and that name must NEVER appear anywhere in the "
+            "output — not for a character, an NPC, a creature, a place, or an aside. When the "
+            "Dungeon Master speaks they are voicing the world: attribute it to the NPC, creature, or "
+            "narration it belongs to, never to them by name, and never describe them as a "
+            "participant taking a turn."
+        )
+        lines.append(
+            "NEVER INVENT A NAME FOR AN NPC. Most NPCs are never named aloud, and an unnamed NPC is "
+            "completely normal. If the transcript does not give one a name, describe them by role or "
+            "appearance — \"the goblin at the ticket booth\", \"a hooded woman\", \"the mischievous "
+            "kenku\" — and leave them unnamed. Never borrow a name from elsewhere in the session to "
+            "fill the gap."
+        )
     if usernames_str:
         lines.append(
             f"NEVER use Discord usernames ({usernames_str}) — they are handles, not people. "
@@ -141,7 +155,13 @@ def _build_party_context(players: dict) -> tuple:
             "Never treat a mis-spelled variant as a separate person, and never introduce it as a new "
             "character or NPC. Always write the name using the spelling from the list above."
         )
-    lines.append("NEVER reference real-world things: no holidays, no game mechanics, no technical issues, no scheduling talk.")
+    lines.append(
+        "NEVER reference real-world things. None of this happened in the world and none of it may "
+        "appear in the output: dice results and rolls (\"a persuasive roll of 20\"), rules and "
+        "character-sheet talk, technical issues, holidays, and — especially — anything about when the "
+        "group will next play. Real-world dates, \"we'll pick this up in two weeks\", who might be "
+        "travelling or unavailable: all of it is out-of-character and must be omitted entirely."
+    )
     party_note = "\n".join(lines)
 
     # Must be a complete sentence — the model's continuation is concatenated
