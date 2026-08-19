@@ -132,6 +132,15 @@ def _build_party_context(players: dict) -> tuple:
             f"NEVER use Discord usernames ({usernames_str}) — they are handles, not people. "
             "Refer to everyone by the names listed above."
         )
+    if party_names:
+        lines.append(
+            "SPOKEN NAMES ARE OFTEN MIS-TRANSCRIBED. The speaker labels (**Name**) are exact, but a "
+            "name spoken aloud inside dialogue is frequently misheard and spelled differently — "
+            "\"Caeli\" may appear as \"Kaylee\", \"Dalki\" as \"Dalky\", and so on. When a name in the "
+            "dialogue sounds like one of the party members listed above, it IS that party member. "
+            "Never treat a mis-spelled variant as a separate person, and never introduce it as a new "
+            "character or NPC. Always write the name using the spelling from the list above."
+        )
     lines.append("NEVER reference real-world things: no holidays, no game mechanics, no technical issues, no scheduling talk.")
     party_note = "\n".join(lines)
 
@@ -264,6 +273,153 @@ def to_character_developments(val, roster=()) -> list:
     return developments
 
 
+CHARACTER_RULES = """Rules:
+- Cover ONLY the party members named above. Never NPCs, never the Dungeon Master.
+- Record what shapes who a character is or where their story is going: leveling up (say the level reached and name any new spell/ability/subclass), a choice they personally made, an injury or brush with death, a promise or bargain entered, a relationship formed or broken, something learned about their own past or origin, a family tie revealed, a personal goal taken up or abandoned, or a change in how they are regarded.
+- Pay special attention to anything touching a condition or loss a character carries — if something they lost stirs, returns, worsens, or is explained, that is exactly what this is for.
+- OMIT a character entirely if nothing notable happened to them in THIS section. Most sections will only involve one or two characters; returning an empty list is a perfectly good answer and far better than padding.
+- Never write filler like "kept watch", "was present", "fought bravely", "assisted the party", or "continued the journey".
+- Ground every entry in this section's text. Do not invent, and do not carry over what you assume happened elsewhere.
+- Write each `development` as one or two plain sentences.
+
+Return ONLY a raw JSON object, no markdown fences:
+{"character_developments": [{"name": "party member's name", "development": "what changed for them here"}]}"""
+
+
+def _parse_json_object(raw: str) -> dict:
+    """Pull a JSON object out of a model response, tolerating fences and prose."""
+    cleaned = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*```$', '', cleaned.strip())
+    match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return {}
+
+
+def load_character_facts() -> str:
+    """Build a compact fact sheet from characters/*.md for attribution grounding.
+
+    The per-chunk character pass judges each section in isolation, so without
+    this it cannot tell that a warlock cantrip belongs to the party's warlock,
+    or that a lost sense of direction belongs to the rogue who lost it — it just
+    credits whoever happens to dominate that chunk.
+    """
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "characters")
+    if not os.path.isdir(base):
+        return ""
+    entries = []
+    for filename in sorted(os.listdir(base)):
+        if not filename.endswith(".md"):
+            continue
+        try:
+            with open(os.path.join(base, filename), "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        name_match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+        if not name_match:
+            continue
+
+        def field(label):
+            m = re.search(rf"^\*\*{label}:\*\*\s*(.+)$", text, re.MULTILINE)
+            return m.group(1).strip() if m else ""
+
+        descriptors = [d for d in (field("Race"), field("Class")) if d]
+        desc = " ".join(descriptors)
+        lost = field("Lost at the Witchlight Carnival")
+        if lost and not lost.lower().startswith("not established"):
+            lost = lost.rstrip(".")
+            desc = f"{desc}; lost {lost}" if desc else f"lost {lost}"
+        entries.append(f"- {name_match.group(1).strip()}: {desc}" if desc else f"- {name_match.group(1).strip()}")
+    if not entries:
+        return ""
+    return (
+        "\n\nKNOWN FACTS about each party member — use these to attribute details to the right "
+        "person, and never contradict them. If a section discusses a trait, class feature, or loss "
+        "that belongs to one of these characters, it is THAT character's development, even if "
+        "another character is doing most of the talking in the section:\n" + "\n".join(entries)
+    )
+
+
+def _join_fragments(parts: list) -> str:
+    """Join merged fragments into readable prose, adding missing terminal periods."""
+    out = []
+    for part in parts:
+        part = part.strip()
+        if part and part[-1] not in ".!?":
+            part += "."
+        out.append(part)
+    return " ".join(out)
+
+
+def _merge_developments(entries: list) -> list:
+    """Fold per-chunk developments into one entry per character, preserving order."""
+    merged = {}
+    for entry in entries:
+        name, development = entry["name"], entry["development"].strip()
+        if not development:
+            continue
+        bucket = merged.setdefault(name, [])
+        if any(development.lower() == existing.lower() for existing in bucket):
+            continue
+        bucket.append(development)
+    return [
+        {"name": name, "development": _join_fragments(parts)}
+        for name, parts in merged.items()
+    ]
+
+
+def extract_character_developments(chunks, party_note, party_names, primer_block="") -> list:
+    """Extract per-character developments from each RAW transcript chunk.
+
+    Deliberately does not read the Pass 1 digest. A long session compresses
+    roughly 12x on the way to that digest, and character beats were being lost
+    in the squeeze — two runs over the same 3h45m transcript produced almost
+    disjoint results, one of them dropping a revealed sibling relationship.
+    Going chunk by chunk against the source text keeps recall high; the cost is
+    one extra cheap call per chunk.
+    """
+    if not party_names:
+        return []
+    system = (
+        "You are a precise data extractor for D&D session logs. "
+        "You return only valid JSON. No markdown, no explanation, no extra text. Only JSON."
+    ) + primer_block
+    character_facts = load_character_facts()
+
+    collected = []
+    print(f"Pass 4: Scanning {len(chunks)} chunks for character developments...")
+    for i, chunk in enumerate(chunks, 1):
+        user = (
+            f"{party_note}{character_facts}\n\n"
+            f"Read section {i} of {len(chunks)} of a D&D session transcript and extract what "
+            f"changed for each party member in THIS section.\n\n"
+            f"{CHARACTER_RULES}\n\n"
+            f"TRANSCRIPT SECTION:\n{chunk}"
+        )
+        try:
+            raw = ollama_generate(
+                system, user, model=EXTRACTION_MODEL,
+                temperature=0.1, max_tokens=1024, json_mode=True,
+            )
+            parsed = _parse_json_object(raw)
+            found = to_character_developments(
+                parsed.get("character_developments", []), roster=party_names
+            )
+            collected.extend(found)
+            if found:
+                print(f"  Chunk {i}/{len(chunks)}: {', '.join(f['name'] for f in found)}")
+        except Exception as e:
+            print(f"  Chunk {i}/{len(chunks)} failed (non-fatal): {e}", file=sys.stderr)
+
+    merged = _merge_developments(collected)
+    print(f"Pass 4 complete: {len(merged)} character(s) with developments")
+    return merged
+
+
 def chunk_transcript(transcript_content: str, chunk_size: int = CHUNK_SIZE_WORDS) -> list:
     """Split transcript into chunks of approximately chunk_size words, breaking at speaker lines."""
     lines = transcript_content.split("\n")
@@ -385,6 +541,10 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
         "  4. Only if you check all of this and there is truly no player anywhere in this section who "
         "claims or is tied to the detail — leave it unattached. Don't stop at the first ambiguous line "
         "and give up; read on before concluding it's unresolvable.\n"
+        "  5. THE ASKER IS NOT THE SUBJECT. If one player asks a question about another player's race, "
+        "class, background, or situation, the answer belongs to the player being ASKED ABOUT, not the "
+        "one who asked. A player wondering aloud 'are changelings rare?' is not thereby a changeling. "
+        "Follow the conversation to whose trait is actually under discussion.\n"
         "Attaching a real detail to the wrong labeled speaker is just as much a grounding failure as "
         "inventing a detail from nothing — the label was right there.\n\n"
         "When in-game content IS present, include (only what actually happened — see PLANS ARE NOT EVENTS above):\n"
@@ -484,7 +644,7 @@ Write the summary now — flowing prose, no bullet points:"""
         "Inkwell signs off every entry as: — Inkwell, Royal Scribe of the Realm"
     ) + primer_block
 
-    narrative_user = f"""{party_note}
+    narrative_user = f"""{party_note}{load_character_facts()}
 {context_block}{allies_context}
 Below are detailed summaries of everything that happened during a D&D session, \
 broken into parts. Your job is to weave ALL of these parts into a single, \
@@ -589,27 +749,8 @@ Return ONLY a raw JSON object (no markdown fences) with exactly these keys:
       "status": "Active | Departed | Unknown",
       "notes": "brief description of their role this session"
     }}
-  ],
-  "character_developments": [
-    {{
-      "name": "party member's character name, exactly as listed in the party above",
-      "development": "what actually changed for this character this session"
-    }}
   ]
 }}
-
-Rules for character_developments:
-- This is the OPPOSITE of `allies`: it covers ONLY the party members named above, never NPCs and never the Dungeon Master.
-- Record things that shape who this character is or where their story is going: leveling up (say what level, and name any new spell/ability/subclass gained), a choice they personally made, an injury or brush with death, a promise or bargain they entered, a relationship formed or broken, something learned about their own past or origin, a personal goal taken up or abandoned, or a change in how they are regarded.
-- Pay special attention to anything touching a condition or loss the character carries — if something they lost stirs, returns, worsens, or gets explained, that is exactly what this field is for. Do not let it slip past because it was a quiet moment rather than a dramatic one.
-- If the summary says a character leveled up, that ALWAYS warrants an entry, even if nothing else happened to them.
-- Use the character's name exactly as it appears in the party list above.
-- One entry per character who did something worth recording. OMIT a character entirely if nothing notable happened to them — do not invent a development to give everyone an entry.
-- A partial or empty session for a character is NORMAL and the correct output is to leave them out. Never write filler like "kept watch", "stayed alert", "was present", "fought bravely", "assisted the party", or "continued the journey". If a character explicitly declined to act, said nothing happened for them, or simply wasn't involved, they get NO entry at all. Returning three entries for a five-person party is a good result, not an incomplete one.
-- Ask yourself for each entry: would a reader looking back at this character's whole arc care about this line? If not, drop it.
-- When a character levels up, state the level reached ("reached 2nd level") alongside what they gained, not just the new ability.
-- Write each `development` as one or two plain sentences about what happened, grounded in the summary. If the summary doesn't say it, it doesn't go here.
-- If nothing notable happened to anyone, use [].
 
 Rules for allies:
 - An ally is an NPC who travels with, fights alongside, or actively aids the party.
@@ -653,6 +794,11 @@ SESSION SUMMARY:
         print(f"Pass 3 error (non-fatal): {e}")
         extraction = {}
 
+    # ── PASS 4: Per-chunk character developments ──────────────────────────────
+    character_developments = extract_character_developments(
+        chunks, party_note, party_names, primer_block
+    )
+
     # ── Assemble final output ──────────────────────────────────────────────────
     loot_found = to_list(extraction.get("loot_found", []))
     purchases = to_list(extraction.get("purchases", []))
@@ -669,9 +815,9 @@ SESSION SUMMARY:
         "npcs": to_text(extraction.get("npcs", "")),
         "lore": to_text(extraction.get("lore", "")),
         "allies": to_allies(extraction.get("allies", []), exclude=roster_names),
-        "character_developments": to_character_developments(
-            extraction.get("character_developments", []), roster=party_names
-        )
+        # Sourced from the per-chunk pass, not the compressed digest — see
+        # extract_character_developments for why.
+        "character_developments": character_developments
     }
 
     output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_data.json")
