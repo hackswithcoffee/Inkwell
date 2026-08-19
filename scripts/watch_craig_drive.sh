@@ -9,6 +9,8 @@ PROJECT_DIR="/Users/dk/Projects/apps/Inkwell"
 CRAIG_DIR="/Users/dk/Library/CloudStorage/GoogleDrive-drkaristai@gmail.com/My Drive/Craig"
 RECORDINGS_DIR="$PROJECT_DIR/recordings"
 STATE_FILE="$PROJECT_DIR/.craig_watcher_state"
+FAILURES_FILE="$PROJECT_DIR/.craig_watcher_failures"
+MAX_ATTEMPTS=3
 LOG_FILE="$PROJECT_DIR/craig_watcher.log"
 LOCK_DIR="$PROJECT_DIR/.craig_watcher.lock"
 
@@ -36,7 +38,7 @@ if [ ! -d "$CRAIG_DIR" ]; then
 fi
 
 cd "$PROJECT_DIR" || exit 1
-touch "$STATE_FILE"
+touch "$STATE_FILE" "$FAILURES_FILE"
 
 shopt -s nullglob
 for src in "$CRAIG_DIR"/*.zip; do
@@ -61,16 +63,33 @@ for src in "$CRAIG_DIR"/*.zip; do
         continue
     fi
 
-    # Mark as seen before running the pipeline so a pipeline failure doesn't
-    # cause an infinite reprocessing loop on the next trigger.
-    echo "$name" >> "$STATE_FILE"
+    # How many times has this recording already failed?
+    prior=$(awk -F'\t' -v n="$name" '$1==n {print $2}' "$FAILURES_FILE" | tail -1)
+    prior=${prior:-0}
 
-    log "Kicking off scribe_pipeline.py for $name"
+    log "Kicking off scribe_pipeline.py for $name (attempt $((prior + 1)) of $MAX_ATTEMPTS)"
     "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scribe_pipeline.py" >> "$LOG_FILE" 2>&1
     status=$?
+
+    # Mark as done only on success, so a run killed partway (OOM, reboot, a
+    # SIGKILL during transcription) is retried instead of silently dropped.
+    # Bounded by MAX_ATTEMPTS: a genuinely broken recording must not reprocess
+    # forever, since each attempt can cost hours of transcription.
     if [ $status -eq 0 ]; then
+        echo "$name" >> "$STATE_FILE"
+        grep -vF "$name	" "$FAILURES_FILE" > "$FAILURES_FILE.tmp" 2>/dev/null || true
+        mv "$FAILURES_FILE.tmp" "$FAILURES_FILE" 2>/dev/null || true
         log "Pipeline completed successfully for $name"
     else
-        log "ERROR: pipeline exited with status $status for $name"
+        attempt=$((prior + 1))
+        grep -vF "$name	" "$FAILURES_FILE" > "$FAILURES_FILE.tmp" 2>/dev/null || true
+        mv "$FAILURES_FILE.tmp" "$FAILURES_FILE" 2>/dev/null || true
+        printf '%s\t%s\n' "$name" "$attempt" >> "$FAILURES_FILE"
+        if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+            echo "$name" >> "$STATE_FILE"
+            log "ERROR: pipeline exited with status $status for $name — failed $attempt times, giving up. Process it manually; it will not be retried."
+        else
+            log "ERROR: pipeline exited with status $status for $name — will retry (attempt $attempt of $MAX_ATTEMPTS)."
+        fi
     fi
 done
