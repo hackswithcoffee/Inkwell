@@ -31,3 +31,4 @@ artifacts/
 transcript_raw.md
 transcript_cleaned.md
 session_data.json
+.pytest_cache/

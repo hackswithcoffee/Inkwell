@@ -123,6 +123,20 @@ The pipeline picks up the most recent `.zip` in `recordings/` and processes that
 - **Character chronicles:** Each party member has a file in `artifacts/characters/`, named from their character name. The extractor records only what actually changed for them in a session — a level gained, a choice made, an injury, a bargain struck, a relationship formed — and appends it under a dated heading. A character with nothing notable that session is left untouched rather than padded with filler, and the hand-written origin section at the top of each file is never rewritten, only appended below. The DM never gets a file. The intent is that each character accumulates a readable arc, so there's a narrative record of their journey if they die or when the campaign ends.
 - **External sync:** If `DRIVE_SYNC_DIR` is set in `.env`, the session's recap, the current `allies.md`, `npcs.md`, and `world_lore.md`, and every file in `artifacts/characters/` (into a `characters/` subfolder) are synced there after every successful run — useful for feeding a synced folder into an external tool (e.g. a NotebookLM/Gemini notebook). A file that isn't in the folder yet is copied in whole; one that's already there has only the new content folded in at the position it belongs, so the notebook's copy grows instead of being replaced and nothing is duplicated. Content that exists only in the synced copy is left alone. Optional; a missing or unmounted folder warns but doesn't fail the run.
 
+## Tests
+
+The pure logic — roster parsing, model-output coercion, denoising, chunking,
+recap formatting, the master-file writers, and the Drive delta sync — is
+covered by a pytest suite that touches no network and no real session data:
+
+```bash
+./.venv/bin/python -m pytest
+```
+
+Install the test dependency once with `pip install -r requirements-dev.txt`.
+Transcription and the Ollama calls are not covered; they need real audio and a
+running model.
+
 ## Layout
 
 - `scribe_pipeline.py` — orchestrates the audio → transcription → extraction → persistence flow
