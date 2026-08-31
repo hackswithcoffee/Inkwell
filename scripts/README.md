@@ -26,7 +26,7 @@ cat > ~/Library/LaunchAgents/com.inkwell.craigwatcher.plist <<'PLIST'
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/dk/Claude/apps/Inkwell/scripts/watch_craig_drive.sh</string>
+        <string>/Users/dk/Claude/Inkwell/scripts/watch_craig_drive.sh</string>
     </array>
     <key>WatchPaths</key>
     <array>
@@ -37,9 +37,9 @@ cat > ~/Library/LaunchAgents/com.inkwell.craigwatcher.plist <<'PLIST'
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/dk/Claude/apps/Inkwell/craig_watcher_launchd.log</string>
+    <string>/Users/dk/Claude/Inkwell/craig_watcher_launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/dk/Claude/apps/Inkwell/craig_watcher_launchd.log</string>
+    <string>/Users/dk/Claude/Inkwell/craig_watcher_launchd.log</string>
 </dict>
 </plist>
 PLIST
