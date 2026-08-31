@@ -1,8 +1,8 @@
 #!/bin/bash
 # Watches the Google Drive "Craig" folder for new recording zips, copies any
 # new ones into ./recordings/, and runs the transcription pipeline for each.
-# Invoked by the com.inkwell.craigwatcher launchd agent — see scripts/README
-# in this same directory for install/uninstall instructions.
+# Invoked by the com.inkwell.craigwatcher launchd agent — see README.md in this
+# same directory for install/uninstall instructions.
 set -uo pipefail
 
 PROJECT_DIR="/Users/dk/Claude/apps/Inkwell"
