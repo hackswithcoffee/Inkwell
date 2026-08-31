@@ -81,11 +81,14 @@ AUDIO_EXTENSIONS = ('.wav', '.flac', '.aac', '.mp3', '.m4a')
 RECORDINGS_DIR = PROJECT_ROOT / "recordings"
 TEMP_AUDIO_DIR = PROJECT_ROOT / "temp_audio"
 ARCHIVE_DIR = PROJECT_ROOT / "archive"
-RECAPS_DIR = PROJECT_ROOT / "recaps"
-LORE_FILE = PROJECT_ROOT / "lore" / "world_lore.md"
-NPCS_FILE = PROJECT_ROOT / "npcs" / "npcs.md"
-ALLIES_FILE = PROJECT_ROOT / "allies" / "allies.md"
-CHARACTERS_DIR = PROJECT_ROOT / "characters"
+# Everything the pipeline generates lives under one root, so the campaign
+# record is a single folder to back up, sync, or gitignore.
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+RECAPS_DIR = ARTIFACTS_DIR / "recaps"
+LORE_FILE = ARTIFACTS_DIR / "world_lore.md"
+NPCS_FILE = ARTIFACTS_DIR / "npcs.md"
+ALLIES_FILE = ARTIFACTS_DIR / "allies.md"
+CHARACTERS_DIR = ARTIFACTS_DIR / "characters"
 RAW_TRANSCRIPT = PROJECT_ROOT / "transcript_raw.md"
 CLEANED_TRANSCRIPT = PROJECT_ROOT / "transcript_cleaned.md"
 LOCAL_SESSION_JSON = PROJECT_ROOT / "session_data.json"
@@ -107,11 +110,9 @@ def _ensure_directories() -> None:
     """
     for d in (
         RECORDINGS_DIR,
-        RECAPS_DIR,
         ARCHIVE_DIR,
-        LORE_FILE.parent,
-        NPCS_FILE.parent,
-        ALLIES_FILE.parent,
+        ARTIFACTS_DIR,
+        RECAPS_DIR,
         CHARACTERS_DIR,
     ):
         d.mkdir(parents=True, exist_ok=True)

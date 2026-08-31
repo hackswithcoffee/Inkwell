@@ -27,11 +27,7 @@ craig_watcher_launchd.log
 .craig_watcher.lock
 
 # Campaign data — backed up separately, not in the code repo
-recaps/
-lore/
-npcs/
-allies/
-characters/
+artifacts/
 transcript_raw.md
 transcript_cleaned.md
 session_data.json

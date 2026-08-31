@@ -327,7 +327,7 @@ def load_character_facts() -> str:
     or that a lost sense of direction belongs to the rogue who lost it — it just
     credits whoever happens to dominate that chunk.
     """
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "characters")
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts", "characters")
     if not os.path.isdir(base):
         return ""
     entries = []

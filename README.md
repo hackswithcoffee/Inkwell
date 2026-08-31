@@ -23,12 +23,12 @@ The pipeline turns a raw multi-track Discord recording into a finished session c
 3. **Drop the zip into `recordings/`.** This is the single trigger for the rest of the pipeline.
 4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically so dialogue flows in real time across speakers. Two files are written: `transcript_raw.md` (everything, verbatim) and `transcript_cleaned.md`, which drops Whisper hallucination noise — stock filler phrases, sub-half-second fragments with no substantive word, a speaker's third consecutive repeat of the same line, and single-word loops. The cleaned transcript is what gets summarized.
 5. **Local LLM extraction.** `extract_data.py` runs against a local Ollama instance in three passes: `mistral-nemo:12b` summarizes the transcript in ~2000-word chunks, then synthesizes those summaries into Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies. If a chunk fails against the narrative model it is retried against the extraction model; if every chunk fails the run aborts rather than writing an empty recap.
-6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `recaps/`, and appends the new findings to the running `lore/world_lore.md`, `npcs/npcs.md`, `allies/allies.md`, and each party member's file in `characters/`.
+6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `artifacts/recaps/`, and appends the new findings to the running `artifacts/world_lore.md`, `artifacts/npcs.md`, `artifacts/allies.md`, and each party member's file in `artifacts/characters/`.
 7. **Archive the source.** The original `.zip` is moved into `archive/` (renamed to the session date) and the extracted audio is deleted to reclaim disk.
 
 ## Recap format
 
-Each `mm_dd_yyyy_recap.md` written to `recaps/` is structured as:
+Each `mm_dd_yyyy_recap.md` written to `artifacts/recaps/` is structured as:
 
 - A **diary entry** at the top — chapter-style narrative prose written from the Scribe's perspective, covering only in-game events
 - A **Scribe's Notes** section at the bottom with:
@@ -98,7 +98,7 @@ ollama pull mistral:7b
 .venv/bin/python -c "import scribe_pipeline; print('Ready')"
 ```
 
-Data folders (`recordings/`, `recaps/`, `lore/`, `npcs/`, `allies/`, `characters/`, `archive/`) are created automatically on first run.
+Data folders (`recordings/`, `archive/`, and everything under `artifacts/`) are created automatically on first run.
 
 ## Usage
 
@@ -118,10 +118,10 @@ The pipeline picks up the most recent `.zip` in `recordings/` and processes that
 - **Source archival:** After a successful run, the source `.zip` is moved into `archive/` and renamed to the session date (`mm_dd_yyyy.zip`). Extracted audio in `temp_audio/` is deleted to reclaim disk, along with the intermediate `session_data.json`. Cleanup happens at the very end — if a run fails partway, the audio is left in place.
 - **Overlap handling:** When speakers overlap during a session, both segments are preserved in the order they started — no truncation of cross-talk.
 - **Out-of-character filtering:** Scheduling chatter, audio glitches, and fourth-wall breaks are filtered out at the LLM extraction step and do not appear in the recap. Mechanical transcription noise is filtered earlier, when the cleaned transcript is written.
-- **Continuity:** The most recently modified recap in `recaps/` is passed to the extractor as context for the next session, along with the current allies roster.
+- **Continuity:** The most recently modified recap in `artifacts/recaps/` is passed to the extractor as context for the next session, along with the current allies roster.
 - **Names:** Discord usernames never appear in a recap — the extractor is given the list from `players.json` and told to exclude them. Character names and real names are both fine, so a player whose character isn't named yet is still written about by their given name. A track with no `players.json` entry falls back to its raw Discord username as the speaker label and warns during transcription; add the entry rather than letting it reach a recap.
-- **Character chronicles:** Each party member has a file in `characters/`, named from their character name. The extractor records only what actually changed for them in a session — a level gained, a choice made, an injury, a bargain struck, a relationship formed — and appends it under a dated heading. A character with nothing notable that session is left untouched rather than padded with filler, and the hand-written origin section at the top of each file is never rewritten, only appended below. The DM never gets a file. The intent is that each character accumulates a readable arc, so there's a narrative record of their journey if they die or when the campaign ends.
-- **External sync:** If `DRIVE_SYNC_DIR` is set in `.env`, the session's recap, the current `allies.md`, `npcs.md`, and `world_lore.md`, and every file in `characters/` (into a `characters/` subfolder) are synced there after every successful run — useful for feeding a synced folder into an external tool (e.g. a NotebookLM/Gemini notebook). A file that isn't in the folder yet is copied in whole; one that's already there has only the new content folded in at the position it belongs, so the notebook's copy grows instead of being replaced and nothing is duplicated. Content that exists only in the synced copy is left alone. Optional; a missing or unmounted folder warns but doesn't fail the run.
+- **Character chronicles:** Each party member has a file in `artifacts/characters/`, named from their character name. The extractor records only what actually changed for them in a session — a level gained, a choice made, an injury, a bargain struck, a relationship formed — and appends it under a dated heading. A character with nothing notable that session is left untouched rather than padded with filler, and the hand-written origin section at the top of each file is never rewritten, only appended below. The DM never gets a file. The intent is that each character accumulates a readable arc, so there's a narrative record of their journey if they die or when the campaign ends.
+- **External sync:** If `DRIVE_SYNC_DIR` is set in `.env`, the session's recap, the current `allies.md`, `npcs.md`, and `world_lore.md`, and every file in `artifacts/characters/` (into a `characters/` subfolder) are synced there after every successful run — useful for feeding a synced folder into an external tool (e.g. a NotebookLM/Gemini notebook). A file that isn't in the folder yet is copied in whole; one that's already there has only the new content folded in at the position it belongs, so the notebook's copy grows instead of being replaced and nothing is duplicated. Content that exists only in the synced copy is left alone. Optional; a missing or unmounted folder warns but doesn't fail the run.
 
 ## Layout
 
@@ -131,7 +131,7 @@ The pipeline picks up the most recent `.zip` in `recordings/` and processes that
 - `dnd rules/` — SRD reference content used by the primer
 - `players.json` — your party roster (gitignored; copy from `players.example.json`)
 - `recordings/` — drop new Craigbot `.zip` files here
-- `recaps/`, `lore/`, `npcs/`, `allies/`, `characters/` — generated and maintained artifacts
+- `artifacts/` — everything the pipeline generates: `world_lore.md`, `npcs.md`, `allies.md`, plus `recaps/` and `characters/`
 - `archive/` — processed `.zip` files, renamed to the session date
 - `temp_audio/`, `transcript_raw.md`, `transcript_cleaned.md`, `session_data.json` — working files produced during a run; all but the transcripts are cleaned up on success
 
