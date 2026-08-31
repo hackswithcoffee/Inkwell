@@ -196,7 +196,18 @@ def transcribe_tracks(temp_dir: Path) -> list:
                 file=sys.stderr,
             )
         print(f"Transcribing track for: {speaker_label(speaker)}")
-        result = mlx_whisper.transcribe(str(item), path_or_hf_repo=WHISPER_MODEL, word_timestamps=True)
+        result = mlx_whisper.transcribe(
+            str(item),
+            path_or_hf_repo=WHISPER_MODEL,
+            word_timestamps=True,
+            # Craig records one track per speaker, so each track is mostly silence
+            # while the others are talking. Left to its defaults, Whisper fills that
+            # silence with hallucinated filler ("Thank you.", "Yeah.") and, worse,
+            # latches onto its own previous output and loops — which can swallow a
+            # player's entire track. These settings keep quiet speakers legible.
+            condition_on_previous_text=False,
+            hallucination_silence_threshold=2.0,
+        )
         for seg in result.get('segments', []):
             all_segments.append({
                 "start": seg['start'], "end": seg['end'],
