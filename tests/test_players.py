@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from extract_data import load_players, parse_player_entry, validate_players
+from inkwell.extractor.players import load_players, parse_player_entry, validate_players
 
 
 @pytest.mark.parametrize("value,expected", [

@@ -6,7 +6,7 @@ recap was written but before the zip was archived.
 """
 import pytest
 
-from extract_data import (
+from inkwell.extractor.normalize import (
     _join_fragments,
     _merge_developments,
     _parse_json_object,

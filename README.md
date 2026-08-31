@@ -22,7 +22,7 @@ The pipeline turns a raw multi-track Discord recording into a finished session c
 2. **Download the recording.** When the session ends, download the multi-track `.zip` archive from Craigbot.
 3. **Drop the zip into `recordings/`.** This is the single trigger for the rest of the pipeline.
 4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically so dialogue flows in real time across speakers. Two files are written: `transcript_raw.md` (everything, verbatim) and `transcript_cleaned.md`, which drops Whisper hallucination noise — stock filler phrases, sub-half-second fragments with no substantive word, a speaker's third consecutive repeat of the same line, and single-word loops. The cleaned transcript is what gets summarized.
-5. **Local LLM extraction.** `extract_data.py` runs against a local Ollama instance in three passes: `mistral-nemo:12b` summarizes the transcript in ~2000-word chunks, then synthesizes those summaries into Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies. If a chunk fails against the narrative model it is retried against the extraction model; if every chunk fails the run aborts rather than writing an empty recap.
+5. **Local LLM extraction.** `inkwell/extractor/` runs against a local Ollama instance in three passes: `mistral-nemo:12b` summarizes the transcript in ~2000-word chunks, then synthesizes those summaries into Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies. If a chunk fails against the narrative model it is retried against the extraction model; if every chunk fails the run aborts rather than writing an empty recap.
 6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `artifacts/recaps/`, and appends the new findings to the running `artifacts/world_lore.md`, `artifacts/npcs.md`, `artifacts/allies.md`, and each party member's file in `artifacts/characters/`.
 7. **Archive the source.** The original `.zip` is moved into `archive/` (renamed to the session date) and the extracted audio is deleted to reclaim disk.
 
@@ -139,8 +139,17 @@ running model.
 
 ## Layout
 
-- `scribe_pipeline.py` — orchestrates the audio → transcription → extraction → persistence flow
-- `extract_data.py` — calls Ollama to produce the diary entry and structured session data
+- `scribe_pipeline.py` — the command you run; everything below it lives in the `inkwell` package
+- `inkwell/` — the pipeline itself:
+  - `config.py` — paths, tunables, and the startup checks
+  - `roster.py` — Discord username → the name a person is called by
+  - `transcribe.py` — unzip, Whisper, denoise, transcript markdown
+  - `extract.py` — hands the transcript to the extractor in its own process
+  - `recap.py` — the recap and the running master files
+  - `sync.py` — the delta sync into the NotebookLM folder
+  - `pipeline.py` — the run, start to finish
+- `inkwell/extractor/` — the Ollama passes: `players.py`, `ollama.py`, `normalize.py`, `context.py`, `passes.py`
+- `tests/` — pytest suite over the logic that needs no audio or model
 - `summarizer_primer.md` — D&D rules cheat sheet that grounds the summarizer's terminology
 - `dnd rules/` — SRD reference content used by the primer
 - `players.json` — your party roster (gitignored; copy from `players.example.json`)

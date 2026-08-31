@@ -1,8 +1,9 @@
 """Shared fixtures.
 
-The pipeline modules read and write real project folders, so every test that
-touches disk gets its own artifacts tree pointed at tmp_path. Nothing here
-should be able to write into the repo's own artifacts/.
+The pipeline reads and writes real project folders, so every test that touches
+disk gets its own artifact tree under tmp_path. Paths are patched in one place —
+``inkwell.config`` — because every module reads them from there as attributes
+rather than importing the values.
 """
 import sys
 from pathlib import Path
@@ -15,16 +16,16 @@ sys.path.insert(0, str(REPO_ROOT))
 
 @pytest.fixture
 def artifacts(tmp_path, monkeypatch):
-    """Repoint scribe_pipeline's artifact paths at a scratch tree."""
-    import scribe_pipeline as sp
+    """Repoint the artifact tree at a scratch folder."""
+    from inkwell import config
 
     root = tmp_path / "artifacts"
     (root / "recaps").mkdir(parents=True)
     (root / "characters").mkdir(parents=True)
-    monkeypatch.setattr(sp, "ARTIFACTS_DIR", root)
-    monkeypatch.setattr(sp, "RECAPS_DIR", root / "recaps")
-    monkeypatch.setattr(sp, "CHARACTERS_DIR", root / "characters")
-    monkeypatch.setattr(sp, "LORE_FILE", root / "world_lore.md")
-    monkeypatch.setattr(sp, "NPCS_FILE", root / "npcs.md")
-    monkeypatch.setattr(sp, "ALLIES_FILE", root / "allies.md")
+    monkeypatch.setattr(config, "ARTIFACTS_DIR", root)
+    monkeypatch.setattr(config, "RECAPS_DIR", root / "recaps")
+    monkeypatch.setattr(config, "CHARACTERS_DIR", root / "characters")
+    monkeypatch.setattr(config, "LORE_FILE", root / "world_lore.md")
+    monkeypatch.setattr(config, "NPCS_FILE", root / "npcs.md")
+    monkeypatch.setattr(config, "ALLIES_FILE", root / "allies.md")
     return root
