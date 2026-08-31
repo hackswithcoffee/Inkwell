@@ -21,8 +21,8 @@ The pipeline turns a raw multi-track Discord recording into a finished session c
 1. **Record the session in Discord.** Add the [Craigbot](https://craig.chat/) recording bot to the party's Discord server and have it record the voice channel for the duration of the session. Craigbot produces one audio track per speaker.
 2. **Download the recording.** When the session ends, download the multi-track `.zip` archive from Craigbot.
 3. **Drop the zip into `recordings/`.** This is the single trigger for the rest of the pipeline.
-4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically so dialogue flows in real time across speakers. Two files are written: `transcript_raw.md` (everything, verbatim) and `transcript_cleaned.md`, which drops Whisper hallucination noise — stock filler phrases, sub-half-second fragments with no substantive word, a speaker's third consecutive repeat of the same line, and single-word loops. The cleaned transcript is what gets summarized.
-5. **Local LLM extraction.** `inkwell/extractor/` runs against a local Ollama instance in three passes: `mistral-nemo:12b` summarizes the transcript in ~2000-word chunks, then synthesizes those summaries into Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies. If a chunk fails against the narrative model it is retried against the extraction model; if every chunk fails the run aborts rather than writing an empty recap.
+4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically so dialogue flows in real time across speakers. Because Craig gives each speaker their own track, most of any one track is silence; Whisper is run with `condition_on_previous_text=False` and a silence threshold so it doesn't fill that silence with invented filler or loop on its own output. Two files are written: `transcript_raw.md` (everything, verbatim) and `transcript_cleaned.md`, which drops what still gets through — stock filler phrases, sub-half-second fragments with no substantive word, a line a speaker has already repeated twice in the last 15 of their segments, and single-word loops. The cleaned transcript is what gets summarized.
+5. **Local LLM extraction.** `inkwell/extractor/` runs against a local Ollama instance in four passes: `mistral-nemo:12b` summarizes the transcript in ~2000-word chunks, then synthesizes those summaries into Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies, and walks the chunks again to attribute each character's developments to the right party member. If a chunk fails against the narrative model it is retried against the extraction model; if every chunk fails the run aborts rather than writing an empty recap.
 6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `artifacts/recaps/`, and appends the new findings to the running `artifacts/world_lore.md`, `artifacts/npcs.md`, `artifacts/allies.md`, and each party member's file in `artifacts/characters/`.
 7. **Archive the source.** The original `.zip` is moved into `archive/` (renamed to the session date) and the extracted audio is deleted to reclaim disk.
 
@@ -51,11 +51,12 @@ Inkwell runs entirely on a single machine. Both transcription and LLM inference 
 
 ### Environment variables
 
-Copy `.env.example` to `.env`. The only variable is:
+Copy `.env.example` to `.env`:
 
 | Variable | Purpose |
 |---|---|
 | `OLLAMA_HOST` | URL of the local Ollama service — defaults to `http://localhost:11434` |
+| `DRIVE_SYNC_DIR` | Optional. A folder to sync the artifacts into after each run — see **External sync** below. Commented out in `.env.example`; uncomment to enable |
 
 `.env` must exist and set every key present in `.env.example`; the pipeline refuses to start otherwise, even though the code has its own default.
 
@@ -112,6 +113,14 @@ Data folders (`recordings/`, `archive/`, and everything under `artifacts/`) are 
 
 The pipeline picks up the most recent `.zip` in `recordings/` and processes that one.
 
+### Running it automatically
+
+`scripts/watch_craig_drive.sh` watches a Google Drive folder for new Craig zips,
+copies each one into `recordings/`, and runs the pipeline for it — so a session
+processes itself once Drive finishes syncing. It is driven by a launchd agent;
+`scripts/README.md` has the plist to install, the `launchctl` commands, and the
+retry and locking behavior.
+
 ## Operational behavior
 
 - **Size guard:** `.zip` files larger than 2GB are refused outright and the run stops.
@@ -130,10 +139,10 @@ recap formatting, the master-file writers, and the Drive delta sync — is
 covered by a pytest suite that touches no network and no real session data:
 
 ```bash
-./.venv/bin/python -m pytest
+.venv/bin/python -m pytest
 ```
 
-Install the test dependency once with `pip install -r requirements-dev.txt`.
+Install the test dependency once with `.venv/bin/pip install -r requirements-dev.txt`.
 Transcription and the Ollama calls are not covered; they need real audio and a
 running model.
 
@@ -149,7 +158,8 @@ running model.
   - `sync.py` — the delta sync into the NotebookLM folder
   - `pipeline.py` — the run, start to finish
 - `inkwell/extractor/` — the Ollama passes: `players.py`, `ollama.py`, `normalize.py`, `context.py`, `passes.py`
-- `tests/` — pytest suite over the logic that needs no audio or model
+- `tests/` — pytest suite over the logic that needs no audio or model (`requirements-dev.txt`, `pytest.ini`)
+- `scripts/` — the Drive watcher and its launchd setup
 - `summarizer_primer.md` — D&D rules cheat sheet that grounds the summarizer's terminology
 - `dnd rules/` — SRD reference content used by the primer
 - `players.json` — your party roster (gitignored; copy from `players.example.json`)
