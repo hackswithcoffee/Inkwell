@@ -5,7 +5,7 @@
 # in this same directory for install/uninstall instructions.
 set -uo pipefail
 
-PROJECT_DIR="/Users/dk/Projects/apps/Inkwell"
+PROJECT_DIR="/Users/dk/Claude/apps/Inkwell"
 CRAIG_DIR="/Users/dk/Library/CloudStorage/GoogleDrive-drkaristai@gmail.com/My Drive/Craig"
 RECORDINGS_DIR="$PROJECT_DIR/recordings"
 STATE_FILE="$PROJECT_DIR/.craig_watcher_state"
