@@ -22,7 +22,7 @@ The pipeline turns a raw multi-track Discord recording into a finished session c
 2. **Download the recording.** When the session ends, download the multi-track `.zip` archive from Craigbot.
 3. **Drop the zip into `recordings/`.** This is the single trigger for the rest of the pipeline.
 4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper`, and interleaves all segments chronologically so dialogue flows in real time across speakers. Because Craig gives each speaker their own track, most of any one track is silence; Whisper is run with `condition_on_previous_text=False` and a silence threshold so it doesn't fill that silence with invented filler or loop on its own output. Two files are written: `transcript_raw.md` (everything, verbatim) and `transcript_cleaned.md`, which drops what still gets through — stock filler phrases, sub-half-second fragments with no substantive word, a line a speaker has already repeated twice in the last 15 of their segments, and single-word loops. The cleaned transcript is what gets summarized.
-5. **Local LLM extraction.** `inkwell/extractor/` runs against a local Ollama instance in four passes: `mistral-nemo:12b` summarizes the transcript in ~2000-word chunks, then synthesizes those summaries into Inkwell's diary entry; `mistral:7b` extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies, and walks the chunks again to attribute each character's developments to the right party member. If a chunk fails against the narrative model it is retried against the extraction model; if every chunk fails the run aborts rather than writing an empty recap.
+5. **Local LLM extraction.** `inkwell/extractor/` runs four passes against a local Ollama instance, all on `gemma4:26b`: it summarizes the transcript in ~2000-word chunks, synthesizes those summaries into Inkwell's diary entry, extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies, and walks the chunks again to attribute each character's developments to the right party member. The two JSON passes use Ollama structured outputs, so the reply is constrained to the expected schema. A chunk that fails is retried once; if every chunk fails the run aborts rather than writing an empty recap.
 6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `artifacts/recaps/`, and appends the new findings to the running `artifacts/world_lore.md`, `artifacts/npcs.md`, `artifacts/allies.md`, and each party member's file in `artifacts/characters/`.
 7. **Archive the source.** The original `.zip` is moved into `archive/` (renamed to the session date) and the extracted audio is deleted to reclaim disk.
 
@@ -42,12 +42,12 @@ Inkwell runs entirely on a single machine. Both transcription and LLM inference 
 
 ### Dependencies
 
-- Apple Silicon Mac — `mlx-whisper` uses the MLX backend and requires Apple Silicon
+- Apple Silicon Mac with 32GB of memory — `mlx-whisper` uses the MLX backend and requires Apple Silicon, and the 18GB extraction model needs most of what macOS lets the GPU use on a 32GB machine
 - Python 3.9+
 - `ffmpeg` on your `PATH` — `mlx-whisper` shells out to it to decode audio (`brew install ffmpeg`)
 - Packages listed in `requirements.txt`: `mlx-whisper` and `python-dotenv` (plus their own transitive dependencies)
 - [Ollama](https://ollama.com) running locally on port 11434
-- Models pulled into Ollama: `mistral-nemo:12b` (narrative) and `mistral:7b` (extraction)
+- `gemma4:26b` pulled into Ollama. It is a mixture-of-experts model (~4B parameters active per token), so it runs at small-model speed. Every pass uses it, so it loads once per run. The model names live in `inkwell/extractor/config.py`
 
 ### Environment variables
 
@@ -91,9 +91,8 @@ cp players.example.json players.json
 # Edit players.json
 
 # Install Ollama and pull the models
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull mistral-nemo:12b
-ollama pull mistral:7b
+brew install ollama
+ollama pull gemma4:26b
 
 # Sanity check — runs all the startup validators without doing real work
 .venv/bin/python -c "import scribe_pipeline; print('Ready')"
@@ -111,7 +110,7 @@ Data folders (`recordings/`, `archive/`, and everything under `artifacts/`) are 
 .venv/bin/python scribe_pipeline.py --date 05_03_2026
 ```
 
-The pipeline picks up the most recent `.zip` in `recordings/` and processes that one.
+The pipeline picks up the most recent `.zip` in `recordings/` and processes that one. Without `--date`, the session date comes from the Craig zip name (`craig_<id>_YYYY-M-D_H-M-S`, recorded in UTC and converted to local time). A zip named any other way falls back to today.
 
 ### Running it automatically
 
@@ -124,6 +123,8 @@ retry and locking behavior.
 ## Operational behavior
 
 - **Size guard:** `.zip` files larger than 2GB are refused outright and the run stops.
+- **Ollama preflight:** Before transcription starts, the pipeline checks that Ollama is reachable and has every model the extractor uses. If not, it exits non-zero and prints the `ollama pull` it needs, so the problem shows up in seconds instead of after hours of transcription.
+- **Context window:** Every Ollama call uses the same 32K-token context, so the model isn't reloaded between calls. A prompt too big for that window gets a larger one for that call instead of being silently truncated.
 - **Source archival:** After a successful run, the source `.zip` is moved into `archive/` and renamed to the session date (`mm_dd_yyyy.zip`). Extracted audio in `temp_audio/` is deleted to reclaim disk, along with the intermediate `session_data.json`. Cleanup happens at the very end — if a run fails partway, the audio is left in place.
 - **Overlap handling:** When speakers overlap during a session, both segments are preserved in the order they started — no truncation of cross-talk.
 - **Out-of-character filtering:** Scheduling chatter, audio glitches, and fourth-wall breaks are filtered out at the LLM extraction step and do not appear in the recap. Mechanical transcription noise is filtered earlier, when the cleaned transcript is written.
@@ -143,8 +144,9 @@ covered by a pytest suite that touches no network and no real session data:
 ```
 
 Install the test dependency once with `.venv/bin/pip install -r requirements-dev.txt`.
-Transcription and the Ollama calls are not covered; they need real audio and a
-running model.
+The extractor also runs end to end against a stubbed model, so every pass is
+wired up without Ollama. What isn't covered is Whisper itself and the quality of
+the model's output. Those need real audio and a running model.
 
 ## Layout
 

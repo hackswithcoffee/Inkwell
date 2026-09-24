@@ -68,7 +68,7 @@ for src in "$CRAIG_DIR"/*.zip; do
     prior=${prior:-0}
 
     log "Kicking off scribe_pipeline.py for $name (attempt $((prior + 1)) of $MAX_ATTEMPTS)"
-    "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scribe_pipeline.py" >> "$LOG_FILE" 2>&1
+    "$PROJECT_DIR/.venv/bin/python" -u "$PROJECT_DIR/scribe_pipeline.py" >> "$LOG_FILE" 2>&1
     status=$?
 
     # Mark as done only on success, so a run killed partway (OOM, reboot, a

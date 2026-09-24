@@ -1,7 +1,6 @@
 """Hand the transcript to the extractor and get structured session data back."""
 import os
 import sys
-import json
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -32,8 +31,8 @@ def local_extraction(transcript_path: Path, previous_recap: Optional[Path] = Non
     """Run extraction in a SEPARATE process, not as an import.
 
     Transcription leaves the whisper model resident (mlx_whisper caches it in a
-    class-level ModelHolder) plus MLX's allocator pool. Loading an 8GB LLM on top
-    of that has been enough to get the whole run SIGKILLed on a 16GB machine,
+    class-level ModelHolder) plus MLX's allocator pool. Loading an 18GB LLM on top
+    of that would push even a 32GB machine into swap or a SIGKILL,
     losing hours of completed transcription. A child process hands all of it back
     to the OS on exit, and also contains an extraction crash instead of taking the
     pipeline down with it.
@@ -41,8 +40,12 @@ def local_extraction(transcript_path: Path, previous_recap: Optional[Path] = Non
     The handoff was already through the filesystem in both directions — this
     reads the transcript from disk and writes session_data.json to disk — so
     nothing but a path crosses the boundary.
+
+    `-u` keeps the child's progress lines unbuffered: under the watcher its
+    stdout is a log file, and a buffered child would write nothing there until
+    it exited — or nothing at all if it was killed.
     """
-    cmd = [sys.executable, "-m", "inkwell.extractor", str(transcript_path)]
+    cmd = [sys.executable, "-u", "-m", "inkwell.extractor", str(transcript_path)]
     if previous_recap and previous_recap.exists():
         cmd += ["--context", str(previous_recap)]
     if config.ALLIES_FILE.exists():
@@ -53,7 +56,7 @@ def local_extraction(transcript_path: Path, previous_recap: Optional[Path] = Non
     if result.returncode != 0:
         raise RuntimeError(
             f"extraction failed with exit code {result.returncode} "
-            f"(transcripts are preserved; re-run extract_data.py against "
-            f"{transcript_path.name} rather than re-transcribing)"
+            f"(transcripts are preserved; re-run `python -m inkwell.extractor "
+            f"{transcript_path.name}` rather than re-transcribing)"
         )
     return config.LOCAL_SESSION_JSON

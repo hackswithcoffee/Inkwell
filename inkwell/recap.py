@@ -1,16 +1,40 @@
 """Write the recap and fold the session into the running master files."""
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from . import config
 
 
-def parse_session_date(session_date: Optional[str]) -> Optional[tuple]:
-    """Parse a date string into (date_str, display_date). Returns None on bad input."""
+CRAIG_TIMESTAMP_RE = re.compile(r"_(\d{4})-(\d{1,2})-(\d{1,2})_(\d{1,2})-(\d{1,2})-(\d{1,2})")
+
+
+def date_from_craig_name(name: str) -> Optional[datetime]:
+    """The local date a Craig recording started, read from its zip name.
+
+    Craig names a recording `craig_<id>_YYYY-M-D_H-M-S.flac.zip`, stamped in
+    UTC. An evening session can start after midnight UTC, so the stamp is
+    converted to local time before taking the date.
+    """
+    m = CRAIG_TIMESTAMP_RE.search(name)
+    if not m:
+        return None
+    try:
+        utc = datetime(*(int(g) for g in m.groups()), tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return utc.astimezone().replace(tzinfo=None)
+
+
+def parse_session_date(session_date: Optional[str], fallback: Optional[datetime] = None) -> Optional[tuple]:
+    """Parse a date string into (date_str, display_date). Returns None on bad input.
+
+    With no string, uses `fallback` (the recording's own start time, when
+    known), else today.
+    """
     if not session_date:
-        dt = datetime.now()
+        dt = fallback or datetime.now()
     else:
         for fmt in ("%m_%d_%Y", "%B %d %Y", "%b %d %Y", "%m/%d/%Y"):
             try:

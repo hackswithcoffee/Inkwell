@@ -1,13 +1,11 @@
 """The extraction passes: summarize, narrate, extract, attribute."""
 import json
 import os
-import re
 import sys
 
-from .config import CHUNK_SIZE_WORDS, EXTRACTION_MODEL, NARRATIVE_MODEL, REPO_ROOT
+from .config import EXTRACTION_MODEL, NARRATIVE_MODEL, REPO_ROOT
 from .context import chunk_transcript, load_character_facts, load_rules_primer
 from .normalize import (
-    _join_fragments,
     _merge_developments,
     _parse_json_object,
     to_allies,
@@ -16,7 +14,7 @@ from .normalize import (
     to_text,
 )
 from .ollama import ollama_generate
-from .players import _build_party_context, load_players
+from .players import _build_party_context, load_players, parse_player_entry
 
 CHARACTER_RULES = """Rules:
 - Cover ONLY the party members named above. Never NPCs, never the Dungeon Master.
@@ -30,9 +28,53 @@ CHARACTER_RULES = """Rules:
 Return ONLY a raw JSON object, no markdown fences:
 {"character_developments": [{"name": "party member's name", "development": "what changed for them here"}]}"""
 
+_STRINGS = {"type": "array", "items": {"type": "string"}}
+
+# Structured-output schemas. Ollama constrains decoding to these, so the keys
+# and types arrive as asked; the normalizers still run because a schema cannot
+# stop a model from, say, listing a party member as an ally.
+CHARACTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "character_developments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "development": {"type": "string"}},
+                "required": ["name", "development"],
+            },
+        },
+    },
+    "required": ["character_developments"],
+}
+
+EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "key_decisions": _STRINGS,
+        "loot_found": _STRINGS,
+        "purchases": _STRINGS,
+        "npcs": {"type": "string"},
+        "lore": {"type": "string"},
+        "allies": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "status": {"type": "string", "enum": ["Active", "Departed", "Unknown"]},
+                    "notes": {"type": "string"},
+                },
+                "required": ["name", "status", "notes"],
+            },
+        },
+    },
+    "required": ["key_decisions", "loot_found", "purchases", "npcs", "lore", "allies"],
+}
 
 
-def extract_character_developments(chunks, party_note, party_names, primer_block="") -> list:
+
+def extract_character_developments(chunks, party_note, party_names, primer_block="", character_facts="") -> list:
     """Extract per-character developments from each RAW transcript chunk.
 
     Deliberately does not read the Pass 1 digest. A long session compresses
@@ -48,7 +90,6 @@ def extract_character_developments(chunks, party_note, party_names, primer_block
         "You are a precise data extractor for D&D session logs. "
         "You return only valid JSON. No markdown, no explanation, no extra text. Only JSON."
     ) + primer_block
-    character_facts = load_character_facts()
 
     collected = []
     print(f"Pass 4: Scanning {len(chunks)} chunks for character developments...")
@@ -63,7 +104,7 @@ def extract_character_developments(chunks, party_note, party_names, primer_block
         try:
             raw = ollama_generate(
                 system, user, model=EXTRACTION_MODEL,
-                temperature=0.1, max_tokens=1024, json_mode=True,
+                temperature=0.1, max_tokens=1024, json_schema=CHARACTER_SCHEMA,
             )
             parsed = _parse_json_object(raw)
             found = to_character_developments(
@@ -116,6 +157,7 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
         if parse_player_entry(v)[0] and not parse_player_entry(v)[2]
     }
 
+    character_facts = load_character_facts()
     rules_primer = load_rules_primer()
     primer_block = f"\n\n--- D&D RULES PRIMER (use to interpret transcript correctly) ---\n{rules_primer}\n--- END RULES PRIMER ---" if rules_primer else ""
     if rules_primer:
@@ -239,7 +281,8 @@ Write the summary now — flowing prose, no bullet points:"""
             chunk_recaps.append(recap)
         except Exception as e:
             print(f"  Chunk {i} error (non-fatal): {e}")
-            # Fall back to extraction model for this chunk
+            # Retry once — on the extraction model when it is a different one,
+            # otherwise the same model, which still rides out a transient error.
             try:
                 recap = ollama_generate(chunk_system, chunk_user, model=EXTRACTION_MODEL, temperature=0.3, max_tokens=2048)
                 chunk_recaps.append(recap)
@@ -282,7 +325,7 @@ Write the summary now — flowing prose, no bullet points:"""
         "Inkwell signs off every entry as: — Inkwell, Royal Scribe of the Realm"
     ) + primer_block
 
-    narrative_user = f"""{party_note}{load_character_facts()}
+    narrative_user = f"""{party_note}{character_facts}
 {context_block}{allies_context}
 Below are detailed summaries of everything that happened during a D&D session, \
 broken into parts. Your job is to weave ALL of these parts into a single, \
@@ -416,17 +459,13 @@ SESSION SUMMARY:
 {combined_recaps}"""
 
     try:
-        raw_extraction = ollama_generate(extraction_system, extraction_user, model=EXTRACTION_MODEL, temperature=0.1, max_tokens=2048, json_mode=True)
-
-        cleaned = re.sub(r'^```(?:json)?\s*', '', raw_extraction, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\s*```$', '', cleaned.strip())
-
-        json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-        if json_match:
-            extraction = json.loads(json_match.group(0))
-        else:
+        raw_extraction = ollama_generate(
+            extraction_system, extraction_user, model=EXTRACTION_MODEL,
+            temperature=0.1, max_tokens=2048, json_schema=EXTRACTION_SCHEMA,
+        )
+        extraction = _parse_json_object(raw_extraction)
+        if not extraction:
             print("Warning: Pass 3 returned no JSON — using empty defaults.")
-            extraction = {}
 
     except Exception as e:
         print(f"Pass 3 error (non-fatal): {e}")
@@ -434,7 +473,7 @@ SESSION SUMMARY:
 
     # ── PASS 4: Per-chunk character developments ──────────────────────────────
     character_developments = extract_character_developments(
-        chunks, party_note, party_names, primer_block
+        chunks, party_note, party_names, primer_block, character_facts
     )
 
     # ── Assemble final output ──────────────────────────────────────────────────

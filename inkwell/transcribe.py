@@ -1,7 +1,10 @@
 """Unpack a Craig zip, transcribe each speaker track, denoise, write markdown."""
+import os
 import re
+import shutil
 import sys
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -88,10 +91,8 @@ def denoise_segments(all_segments: list) -> list:
 
         # Filter 4: Intra-segment word loop — any single word repeated 8+ times
         words = seg['text'].split()
-        if len(words) >= 8:
-            most_common_word = max(set(words), key=words.count)
-            if words.count(most_common_word) >= 8:
-                continue
+        if len(words) >= 8 and Counter(words).most_common(1)[0][1] >= 8:
+            continue
 
         cleaned.append(seg)
     return cleaned

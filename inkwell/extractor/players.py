@@ -65,7 +65,7 @@ def load_players(players_path=None) -> dict:
         print(f"players.json is not valid JSON ({e}).", file=sys.stderr)
         sys.exit(1)
     if not isinstance(players, dict) or not players:
-        print(f"players.json must be a non-empty object of username → name.", file=sys.stderr)
+        print("players.json must be a non-empty object of username → name.", file=sys.stderr)
         sys.exit(1)
     validate_players(players, players_path)
     return players

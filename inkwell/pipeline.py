@@ -1,7 +1,9 @@
 """Run the whole session end to end."""
 import os
+import sys
 import json
 import shutil
+import urllib.error
 from pathlib import Path
 from typing import Optional
 
@@ -10,12 +12,14 @@ from .transcribe import get_latest_zip, extract_audio_zip, transcribe_tracks, wr
 from .extract import get_previous_recap, transcript_is_current, local_extraction
 from .recap import (
     parse_session_date,
+    date_from_craig_name,
     format_recap,
     append_lore_and_npcs,
     update_allies_roster,
     update_character_files,
 )
 from .sync import sync_to_drive
+from .extractor.ollama import missing_models
 
 
 def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str) -> None:
@@ -25,21 +29,46 @@ def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str) -> N
         json_path.unlink()
 
 
+def check_ollama() -> None:
+    """Exit non-zero unless Ollama is up and has every model the extractor uses.
+
+    Runs before transcription, which is the hours-long half of a run: finding
+    out afterwards that Ollama was stopped or a model was never pulled throws
+    all of that away. Non-zero so the watcher counts it as a failed attempt and
+    retries the zip later rather than marking it done.
+    """
+    try:
+        missing = missing_models()
+    except (urllib.error.URLError, OSError) as e:
+        print(f"Ollama is not reachable at its configured host ({e}). Start it with `ollama serve` "
+              "or the Ollama app, then re-run.", file=sys.stderr)
+        sys.exit(1)
+    if missing:
+        print("Ollama is missing model(s) the extractor needs:", file=sys.stderr)
+        for m in missing:
+            print(f"  ollama pull {m}", file=sys.stderr)
+        sys.exit(1)
+
+
 def run_pipeline(session_date: Optional[str] = None):
     print("Inkwell Scribe Pipeline Starting...")
-
-    parsed = parse_session_date(session_date)
-    if parsed is None:
-        return
-    date_str, display_date = parsed
 
     zip_file = get_latest_zip()
     if not zip_file:
         print("No .zip found in recordings/")
         return
+
+    # The watcher passes no --date, and it may process a session hours later
+    # or the next day, so default to when the recording itself started.
+    parsed = parse_session_date(session_date, fallback=date_from_craig_name(zip_file.name))
+    if parsed is None:
+        return
+    date_str, display_date = parsed
+    print(f"Session date: {display_date}")
     if os.path.getsize(zip_file) > config.MAX_SIZE_BYTES:
         print("File too large (>2GB). Exiting.")
         return
+    check_ollama()
 
     # Reuse a transcript that already covers this zip. Transcription is the
     # expensive half — hours for a long session — and the watcher now retries a

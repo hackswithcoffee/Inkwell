@@ -66,3 +66,29 @@ class TestCharacterFile:
 
     def test_unnameable_input_gets_a_fallback(self, artifacts):
         assert recap.character_file("!!!").name == "unnamed.md"
+
+
+@pytest.fixture
+def new_york(monkeypatch):
+    import time
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+class TestCraigDate:
+    def test_reads_the_utc_stamp_as_local_time(self, new_york):
+        # 01:30 UTC on the 17th is 21:30 on the 16th in New York.
+        dt = recap.date_from_craig_name("craig_gYLfxUN4TI7y_2026-8-17_1-30-0.flac.zip")
+        assert (dt.month, dt.day, dt.hour) == (8, 16, 21)
+
+    def test_unrecognized_name_gives_none(self):
+        assert recap.date_from_craig_name("session.zip") is None
+
+    def test_fallback_is_used_only_without_an_explicit_date(self):
+        from datetime import datetime
+        fb = datetime(2026, 8, 16, 19, 0)
+        assert recap.parse_session_date(None, fallback=fb) == ("08_16_2026", "August 16, 2026")
+        assert recap.parse_session_date("09_13_2026", fallback=fb)[0] == "09_13_2026"
