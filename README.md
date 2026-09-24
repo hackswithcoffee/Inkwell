@@ -153,6 +153,13 @@ the record. **Anything edited directly in a Doc is overwritten** the next time i
 
 The app uses the `drive.file` scope, so it can only see the files and folders it created itself.
 
+**Secrets live in the baobox vault, not on disk.** The OAuth client and the Google sign-in are stored in
+OpenBao (`https://baobox.hackswithcoffee.me:8200`, KV v2) at `secret/apps/inkwell/google`, in the fields
+`client_config` and `token`. The pipeline reads them through its own AppRole, `inkwell`. That role's policy,
+`inkwell-ro`, can read only that one path. The AppRole's role_id and secret_id sit in the macOS login
+Keychain (`inkwell-approle-role-id`, `inkwell-approle-secret-id`), where the launchd watcher can read them.
+Only the two one-time setup commands below write to the vault, and they need an admin token in `BAO_TOKEN`.
+
 ### One-time setup
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), create a project (for example `Inkwell`).
@@ -161,17 +168,21 @@ The app uses the `drive.file` scope, so it can only see the files and folders it
    contact. Add the scope `.../auth/drive.file`. Then **Publish app** (set it to *In production*).
    `drive.file` is a non-sensitive scope, so this needs no Google review. It matters because a
    consent screen left in *Testing* issues sign-ins that expire after 7 days, and sessions are further apart than that.
-4. Create an **OAuth client ID** of type *Desktop app*, download its JSON, and save it as
-   `google_credentials.json` in the repo root (it's gitignored).
-5. Sign in once. A browser window opens, and after you click Allow the token is saved to
-   `google_token.json` (also gitignored):
+4. Create an **OAuth client ID** of type *Desktop app* and download its JSON.
+5. Store the client in the vault, then delete the downloaded file:
 
    ```bash
-   .venv/bin/python -m inkwell.gdocs --auth
+   BAO_TOKEN=$(baobox token) .venv/bin/python -m inkwell.gdocs --load-client ~/Downloads/client_secret_*.json
+   ```
+
+6. Sign in once. A browser window opens, and after you click Allow the sign-in is written to the vault:
+
+   ```bash
+   BAO_TOKEN=$(baobox token) .venv/bin/python -m inkwell.gdocs --auth
    ```
 
 After that, every pipeline run syncs by itself. To sync by hand, run `.venv/bin/python -m inkwell.gdocs`.
-If the sign-in lapses, the run still completes but warns and names the `--auth` command.
+If the sign-in lapses or the vault can't be reached, the run still completes, but it warns and names the fix.
 
 ## Operational behavior
 
@@ -211,7 +222,8 @@ the model's output. Those need real audio and a running model.
   - `transcribe.py` — unzip, Whisper, denoise, transcript markdown
   - `extract.py` — hands the transcript to the extractor in its own process
   - `recap.py` — the recap and the running master files
-  - `gdocs.py` — the Google Docs mirror for the NotebookLM notebook (`python -m inkwell.gdocs [--auth]`)
+  - `gdocs.py` — the Google Docs mirror for the NotebookLM notebook (`python -m inkwell.gdocs [--auth | --load-client JSON]`)
+  - `vault.py` — reads the Google secrets from the baobox OpenBao vault through the `inkwell` AppRole
   - `rebuild.py` — regenerate every artifact from `archive/` (`python -m inkwell.rebuild`)
   - `pipeline.py` — the run, start to finish
 - `inkwell/extractor/` — the Ollama passes: `players.py`, `ollama.py`, `normalize.py`, `context.py`, `passes.py`
@@ -224,7 +236,6 @@ the model's output. Those need real audio and a running model.
 - `artifacts/` — everything the pipeline generates: `world_lore.md`, `npcs.md`, `allies.md`, plus `recaps/` and `characters/`
 - `archive/` — processed `.zip` files, renamed to the session date
 - `backups/` — earlier `artifacts/` folders set aside by `inkwell.rebuild`
-- `google_credentials.json`, `google_token.json` — Google Docs sync client and sign-in (gitignored)
 - `temp_audio/`, `transcript_raw.md`, `transcript_cleaned.md`, `session_data.json` — working files produced during a run; all but the transcripts are cleaned up on success
 
 ## License

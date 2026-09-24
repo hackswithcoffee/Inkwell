@@ -98,10 +98,8 @@ LOCAL_SESSION_JSON = PROJECT_ROOT / "session_data.json"
 RULES_PRIMER_FILE = PROJECT_ROOT / "summarizer_primer.md"
 
 # Optional: mirror every artifact into Google Docs (see inkwell/gdocs.py) so a
-# NotebookLM notebook built on them updates itself. Off until the OAuth client
-# file below exists; both files are gitignored.
-GOOGLE_CREDENTIALS_FILE = PROJECT_ROOT / "google_credentials.json"
-GOOGLE_TOKEN_FILE = PROJECT_ROOT / "google_token.json"
+# NotebookLM notebook built on them updates itself. Its OAuth client and sign-in
+# are read from the baobox vault (inkwell/vault.py); off until those exist.
 GDOCS_FOLDER = os.environ.get("GDOCS_FOLDER", "Inkwell Notebook")
 BACKUPS_DIR = PROJECT_ROOT / "backups"
 

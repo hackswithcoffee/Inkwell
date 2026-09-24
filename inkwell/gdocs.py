@@ -11,14 +11,19 @@ The local .md files stay the record. A Doc's contents are overwritten from its
 Uses the drive.file scope: the app sees only the files and folders it created,
 nothing else in the Drive. Each one carries an `inkwell_key` app property, which
 is how it is found again on the next run.
+
+The OAuth client and the sign-in live in the baobox vault (see vault.py), never
+on disk. A run refreshes the short-lived access token in memory each time; the
+long-lived refresh token in the vault is what persists.
 """
 import hashlib
 import io
+import json
 import re
 import sys
 from datetime import datetime
 
-from . import config
+from . import config, vault
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 DOC_MIME = "application/vnd.google-apps.document"
@@ -29,39 +34,44 @@ class NotAuthorized(Exception):
     pass
 
 
-def _save_token(creds) -> None:
-    config.GOOGLE_TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
-    config.GOOGLE_TOKEN_FILE.chmod(0o600)
-
-
 def _credentials(interactive: bool = False):
-    """Load the saved token, refreshing it if needed. Only `interactive` may open a browser."""
+    """Sign in from the vault. Only `interactive` may open a browser to sign in anew."""
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
+    stored = vault.read_google()
     creds = None
-    if config.GOOGLE_TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(config.GOOGLE_TOKEN_FILE), SCOPES)
+    if stored.get("token"):
+        creds = Credentials.from_authorized_user_info(json.loads(stored["token"]), SCOPES)
     if creds and creds.valid:
         return creds
-    if creds and creds.expired and creds.refresh_token:
+    if creds and creds.refresh_token:
         try:
             creds.refresh(Request())
-            _save_token(creds)
             return creds
         except Exception as e:
             if not interactive:
-                raise NotAuthorized(f"the saved Google sign-in could not be refreshed ({e})")
+                raise NotAuthorized(f"the stored Google sign-in could not be refreshed ({e})")
     if not interactive:
         raise NotAuthorized("not signed in to Google")
-    if not config.GOOGLE_CREDENTIALS_FILE.exists():
-        raise NotAuthorized(f"{config.GOOGLE_CREDENTIALS_FILE.name} is missing — see README, Google Docs sync")
+    if not stored.get("client_config"):
+        raise NotAuthorized("no OAuth client in the vault yet — run with --load-client first")
     from google_auth_oauthlib.flow import InstalledAppFlow
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(config.GOOGLE_CREDENTIALS_FILE), SCOPES)
-    creds = flow.run_local_server(port=0)
-    _save_token(creds)
+    flow = InstalledAppFlow.from_client_config(json.loads(stored["client_config"]), SCOPES)
+    # prompt=consent makes Google issue a refresh token even on a repeat sign-in.
+    creds = flow.run_local_server(port=0, prompt="consent")
+    vault.store_google(token=creds.to_json())
     return creds
+
+
+def load_client(path: str) -> None:
+    """Store a downloaded OAuth client JSON in the vault."""
+    text = open(path, encoding="utf-8").read()
+    if "installed" not in json.loads(text):
+        raise SystemExit(f"{path} is not a Desktop-app OAuth client (no 'installed' section).")
+    vault.store_google(client_config=text)
+    print(f"OAuth client stored in the vault at secret/{vault.GOOGLE_PATH}. Delete {path} now.")
 
 
 def _service(interactive: bool = False):
@@ -148,7 +158,7 @@ def sync_artifacts(interactive: bool = False) -> bool:
     already written the recap must not fail because Google is unreachable or
     the sign-in lapsed. It warns with the fix instead.
     """
-    if not config.GOOGLE_CREDENTIALS_FILE.exists() and not config.GOOGLE_TOKEN_FILE.exists():
+    if not vault.configured():
         print("Google Docs sync not set up — skipped (see README, Google Docs sync).")
         return False
     try:
@@ -170,9 +180,11 @@ def sync_artifacts(interactive: bool = False) -> bool:
     except NotAuthorized as e:
         print(
             f"Warning: Google Docs sync skipped — {e}. Sign in again with "
-            "`./.venv/bin/python -m inkwell.gdocs --auth`.",
+            "`BAO_TOKEN=$(baobox token) ./.venv/bin/python -m inkwell.gdocs --auth`.",
             file=sys.stderr,
         )
+    except vault.VaultError as e:
+        print(f"Warning: Google Docs sync skipped — {e}.", file=sys.stderr)
     except Exception as e:
         print(f"Warning: Google Docs sync failed: {e}", file=sys.stderr)
     return False
@@ -182,6 +194,10 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Sync Inkwell's artifacts to Google Docs")
-    parser.add_argument("--auth", action="store_true", help="Sign in to Google in the browser first")
+    parser.add_argument("--auth", action="store_true", help="Sign in to Google in the browser first (needs BAO_TOKEN)")
+    parser.add_argument("--load-client", metavar="JSON", help="Store a downloaded OAuth client in the vault (needs BAO_TOKEN), then exit")
     args = parser.parse_args()
+    if args.load_client:
+        load_client(args.load_client)
+        sys.exit(0)
     sys.exit(0 if sync_artifacts(interactive=args.auth) else 1)

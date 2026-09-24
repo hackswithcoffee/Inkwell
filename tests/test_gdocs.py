@@ -81,17 +81,14 @@ def test_unchanged_file_is_not_re_uploaded(artifacts):
     assert [c[0] for c in drive.calls] == ["create"]
 
 
-def test_sync_is_skipped_quietly_when_not_set_up(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(config, "GOOGLE_CREDENTIALS_FILE", tmp_path / "none.json")
-    monkeypatch.setattr(config, "GOOGLE_TOKEN_FILE", tmp_path / "none2.json")
+def test_sync_is_skipped_quietly_when_not_set_up(monkeypatch, capsys):
+    monkeypatch.setattr(gdocs.vault, "configured", lambda: False)
     assert gdocs.sync_artifacts() is False
     assert "not set up" in capsys.readouterr().out
 
 
-def test_expired_sign_in_warns_instead_of_failing(tmp_path, monkeypatch, capsys):
-    token = tmp_path / "token.json"
-    token.write_text("{}")
-    monkeypatch.setattr(config, "GOOGLE_TOKEN_FILE", token)
+def test_expired_sign_in_warns_instead_of_failing(monkeypatch, capsys):
+    monkeypatch.setattr(gdocs.vault, "configured", lambda: True)
 
     def refuse(interactive=False):
         raise gdocs.NotAuthorized("not signed in to Google")
@@ -99,3 +96,14 @@ def test_expired_sign_in_warns_instead_of_failing(tmp_path, monkeypatch, capsys)
     monkeypatch.setattr(gdocs, "_service", refuse)
     assert gdocs.sync_artifacts() is False
     assert "--auth" in capsys.readouterr().err
+
+
+def test_unreachable_vault_warns_instead_of_failing(monkeypatch, capsys):
+    monkeypatch.setattr(gdocs.vault, "configured", lambda: True)
+
+    def down(interactive=False):
+        raise gdocs.vault.VaultError("vault unreachable")
+
+    monkeypatch.setattr(gdocs, "_service", down)
+    assert gdocs.sync_artifacts() is False
+    assert "vault unreachable" in capsys.readouterr().err
