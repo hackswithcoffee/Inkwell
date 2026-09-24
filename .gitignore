@@ -21,6 +21,7 @@ google_token.json
 archive/
 backups/
 recordings/
+temp_audio/
 *.bak.*
 pipeline.log
 craig_watcher.log
