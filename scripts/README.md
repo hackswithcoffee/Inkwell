@@ -45,6 +45,13 @@ cat > ~/Library/LaunchAgents/com.inkwell.craigwatcher.plist <<'PLIST'
 PLIST
 ```
 
+The Craig folder lives under `~/Library/CloudStorage`, which macOS privacy
+protection blocks for launchd jobs. Grant **/bin/bash** Full Disk Access
+(System Settings → Privacy & Security → Full Disk Access → `+`, then
+Cmd-Shift-G and `/bin/bash`). Without it, the script can see the folder exists
+but can't list it. It logs `ERROR: cannot read …` and never picks up a
+recording.
+
 Then load it:
 
 ```bash

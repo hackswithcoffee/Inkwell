@@ -37,6 +37,14 @@ if [ ! -d "$CRAIG_DIR" ]; then
     exit 1
 fi
 
+# macOS privacy protection (TCC) lets a launchd job see that the folder exists
+# but refuses to list it, and an unlistable folder globs exactly like an empty
+# one. Fail loudly instead, or new recordings are silently never picked up.
+if ! ls "$CRAIG_DIR" >/dev/null 2>&1; then
+    log "ERROR: cannot read $CRAIG_DIR (Operation not permitted). Grant /bin/bash Full Disk Access in System Settings > Privacy & Security."
+    exit 1
+fi
+
 cd "$PROJECT_DIR" || exit 1
 touch "$STATE_FILE" "$FAILURES_FILE"
 
