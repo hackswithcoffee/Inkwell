@@ -22,8 +22,8 @@ The pipeline turns a raw multi-track Discord recording into a finished session c
 2. **Download the recording.** When the session ends, download the multi-track `.zip` archive from Craigbot.
 3. **Drop the zip into `recordings/`.** This is the single trigger for the rest of the pipeline.
 4. **Local transcription.** `scribe_pipeline.py` unpacks the zip, transcribes each speaker's track with `mlx-whisper` using Whisper large-v3 (`mlx-community/whisper-large-v3-mlx`), and interleaves all segments chronologically so dialogue flows in real time across speakers. Because Craig gives each speaker their own track, most of any one track is silence. That's why this uses full large-v3 rather than turbo: on these tracks turbo was about 6x slower, and it misheard more names. Whisper is run with `condition_on_previous_text=False` and a silence threshold so it doesn't fill that silence with invented filler or loop on its own output. Two files are written: `transcript_raw.md` (everything, verbatim) and `transcript_cleaned.md`, which drops what still gets through — stock filler phrases, sub-half-second fragments with no substantive word, a line a speaker has already repeated twice in the last 15 of their segments, and single-word loops. The cleaned transcript is what gets summarized.
-5. **Local LLM extraction.** `inkwell/extractor/` runs four passes against a local Ollama instance, all on `gemma4:26b`: it summarizes the transcript in ~2000-word chunks, synthesizes those summaries into Inkwell's diary entry, extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies, and walks the chunks again to attribute each character's developments to the right party member. The two JSON passes use Ollama structured outputs, so the reply is constrained to the expected schema. A chunk that fails is retried once; if every chunk fails the run aborts rather than writing an empty recap.
-6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `artifacts/recaps/`, and appends the new findings to the running `artifacts/world_lore.md`, `artifacts/npcs.md`, `artifacts/allies.md`, and each party member's file in `artifacts/characters/`.
+5. **Local LLM extraction.** `inkwell/extractor/` runs five passes against a local Ollama instance, all on `gemma4:26b`: it summarizes the transcript in ~2000-word chunks, synthesizes those summaries into Inkwell's diary entry, extracts a structured `session_data.json` with decisions, loot, purchases, NPCs, lore, and allies, walks the chunks again to attribute each character's developments to the right party member, and writes an Origin for any party member who doesn't have one yet. The JSON passes use Ollama structured outputs, so the reply is constrained to the expected schema. A chunk that fails is retried once; if every chunk fails the run aborts rather than writing an empty recap.
+6. **Persist.** The pipeline writes a dated `mm_dd_yyyy_recap.md` to `artifacts/recaps/`, and appends the new findings to the running `artifacts/world_lore.md`, `artifacts/npcs.md`, `artifacts/allies.md`, and each party member's file in `artifacts/characters/`. If Google Docs sync is set up, every artifact is then mirrored into Google Docs (see **Google Docs sync**).
 7. **Archive the source.** The original `.zip` is moved into `archive/` (renamed to the session date) and the extracted audio is deleted to reclaim disk.
 
 ## Recap format
@@ -45,7 +45,7 @@ Inkwell runs entirely on a single machine. Both transcription and LLM inference 
 - Apple Silicon Mac with 32GB of memory — `mlx-whisper` uses the MLX backend and requires Apple Silicon, and the 18GB extraction model needs most of what macOS lets the GPU use on a 32GB machine
 - Python 3.9+
 - `ffmpeg` on your `PATH` — `mlx-whisper` shells out to it to decode audio (`brew install ffmpeg`)
-- Packages listed in `requirements.txt`: `mlx-whisper` and `python-dotenv` (plus their own transitive dependencies)
+- Packages listed in `requirements.txt`: `mlx-whisper`, `python-dotenv`, and the Google API client (`google-api-python-client`, `google-auth-oauthlib`), plus their own dependencies
 - [Ollama](https://ollama.com) running locally on port 11434
 - `gemma4:26b` pulled into Ollama. It is a mixture-of-experts model (~4B parameters active per token), so it runs at small-model speed. Every pass uses it, so it loads once per run. The model names live in `inkwell/extractor/config.py`
 
@@ -56,7 +56,7 @@ Copy `.env.example` to `.env`:
 | Variable | Purpose |
 |---|---|
 | `OLLAMA_HOST` | URL of the local Ollama service — defaults to `http://localhost:11434` |
-| `DRIVE_SYNC_DIR` | Optional. A folder to sync the artifacts into after each run — see **External sync** below. Commented out in `.env.example`; uncomment to enable |
+| `GDOCS_FOLDER` | Optional. Name of the Google Drive folder the Google Docs are written into. Defaults to `Inkwell Notebook` |
 
 `.env` must exist and set every key present in `.env.example`; the pipeline refuses to start otherwise, even though the code has its own default.
 
@@ -120,6 +120,59 @@ processes itself once Drive finishes syncing. It is driven by a launchd agent;
 `scripts/README.md` has the plist to install, the `launchctl` commands, and the
 retry and locking behavior.
 
+### Rebuilding from the archive
+
+```bash
+.venv/bin/python -m inkwell.rebuild --dry-run   # list the sessions it would run
+.venv/bin/python -m inkwell.rebuild
+```
+
+This regenerates every artifact from scratch. The current `artifacts/` folder is moved into
+`backups/artifacts_<timestamp>/`, not deleted. Then every `MM_DD_YYYY.zip` in `archive/` is
+transcribed and extracted again, oldest first, so each session gets the one before it as context
+and each character's Origin comes from the session that introduced them. The zips stay in `archive/`.
+It holds the watcher's lock the whole time, so the two never run at once, and it syncs the
+Google Docs once at the end. It takes roughly an hour per session.
+
+## Google Docs sync
+
+A NotebookLM notebook re-syncs Google Doc sources on its own, but a Markdown file uploaded from Drive
+is a frozen copy. So after every run the pipeline mirrors each artifact into its own Google Doc,
+inside a Drive folder named by `GDOCS_FOLDER`:
+
+| Doc | From |
+|---|---|
+| `Allies`, `NPCs`, `World Lore` | the three master files |
+| `Recaps/Recap — <Month D, YYYY>` | one per session |
+| `Characters/<name>` | one per party member |
+
+Each run replaces a Doc's contents in place, keeping the same file and the same ID, so a notebook source
+built on it picks up the change by itself. Add the Docs to the notebook once. After that, the only
+new sources are a new session's recap and any newly introduced character. The local `.md` files stay
+the record. **Anything edited directly in a Doc is overwritten** the next time its `.md` changes.
+
+The app uses the `drive.file` scope, so it can only see the files and folders it created itself.
+
+### One-time setup
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project (for example `Inkwell`).
+2. Enable the **Google Drive API** for it (APIs & Services → Library).
+3. Configure the **OAuth consent screen**: External, with your own address as the support and developer
+   contact. Add the scope `.../auth/drive.file`. Then **Publish app** (set it to *In production*).
+   `drive.file` is a non-sensitive scope, so this needs no Google review. It matters because a
+   consent screen left in *Testing* issues sign-ins that expire after 7 days, and sessions are further apart than that.
+4. Create an **OAuth client ID** of type *Desktop app*, download its JSON, and save it as
+   `google_credentials.json` in the repo root (it's gitignored).
+5. Sign in once. A browser window opens, and after you click Allow the token is saved to
+   `google_token.json` (also gitignored):
+
+   ```bash
+   .venv/bin/python -m inkwell.gdocs --auth
+   ```
+
+After that, every pipeline run syncs by itself. To sync by hand, run `.venv/bin/python -m inkwell.gdocs`.
+If the sign-in lapses, the run still completes but warns and names the `--auth` command.
+
 ## Operational behavior
 
 - **Size guard:** `.zip` files larger than 2GB are refused outright and the run stops.
@@ -130,13 +183,14 @@ retry and locking behavior.
 - **Out-of-character filtering:** Scheduling chatter, audio glitches, and fourth-wall breaks are filtered out at the LLM extraction step and do not appear in the recap. Mechanical transcription noise is filtered earlier, when the cleaned transcript is written.
 - **Continuity:** The most recently modified recap in `artifacts/recaps/` is passed to the extractor as context for the next session, along with the current allies roster.
 - **Names:** Discord usernames never appear in a recap — the extractor is given the list from `players.json` and told to exclude them. Character names and real names are both fine, so a player whose character isn't named yet is still written about by their given name. A track with no `players.json` entry falls back to its raw Discord username as the speaker label and warns during transcription; add the entry rather than letting it reach a recap.
-- **Character chronicles:** Each party member has a file in `artifacts/characters/`, named from their character name. The extractor records only what actually changed for them in a session — a level gained, a choice made, an injury, a bargain struck, a relationship formed — and appends it under a dated heading. A character with nothing notable that session is left untouched rather than padded with filler, and the hand-written origin section at the top of each file is never rewritten, only appended below. The DM never gets a file. The intent is that each character accumulates a readable arc, so there's a narrative record of their journey if they die or when the campaign ends.
-- **External sync:** If `DRIVE_SYNC_DIR` is set in `.env`, the session's recap, the current `allies.md`, `npcs.md`, and `world_lore.md`, and every file in `artifacts/characters/` (into a `characters/` subfolder) are synced there after every successful run — useful for feeding a synced folder into an external tool (e.g. a NotebookLM/Gemini notebook). A file that isn't in the folder yet is copied in whole; one that's already there has only the new content folded in at the position it belongs, so the notebook's copy grows instead of being replaced and nothing is duplicated. Content that exists only in the synced copy is left alone. Optional; a missing or unmounted folder warns but doesn't fail the run.
+- **Character chronicles:** Each party member has a file in `artifacts/characters/`, named from their character name. The first session they appear in opens it with an **Origin**: player, race, class, anything they lost, and a short account of who they are, written only from what the table actually established. Facts are gathered from the raw transcript chunk by chunk, then written up once. After that, the extractor records only what actually changed for them in a session — a level gained, a choice made, an injury, a bargain struck, a relationship formed — and appends it under a dated heading. A character with nothing notable that session is left untouched rather than padded with filler. The Origin is never rewritten, only appended below (only `inkwell.rebuild` regenerates it). The DM never gets a file. The intent is that each character accumulates a readable arc, so there's a narrative record of their journey if they die or when the campaign ends.
+- **Google Docs sync:** After every successful run, each artifact is mirrored into Google Docs, and each Doc is updated in place so NotebookLM sources follow along. Unchanged files are skipped. It's optional: if it isn't set up, the run says so and skips it; a lapsed sign-in or no network warns but doesn't fail the run. See **Google Docs sync** above.
 
 ## Tests
 
 The pure logic — roster parsing, model-output coercion, denoising, chunking,
-recap formatting, the master-file writers, and the Drive delta sync — is
+recap formatting, the master-file writers and Origins, the Google Docs mirror (against a
+fake Drive), and the archive rebuild's ordering — is
 covered by a pytest suite that touches no network and no real session data:
 
 ```bash
@@ -157,7 +211,8 @@ the model's output. Those need real audio and a running model.
   - `transcribe.py` — unzip, Whisper, denoise, transcript markdown
   - `extract.py` — hands the transcript to the extractor in its own process
   - `recap.py` — the recap and the running master files
-  - `sync.py` — the delta sync into the NotebookLM folder
+  - `gdocs.py` — the Google Docs mirror for the NotebookLM notebook (`python -m inkwell.gdocs [--auth]`)
+  - `rebuild.py` — regenerate every artifact from `archive/` (`python -m inkwell.rebuild`)
   - `pipeline.py` — the run, start to finish
 - `inkwell/extractor/` — the Ollama passes: `players.py`, `ollama.py`, `normalize.py`, `context.py`, `passes.py`
 - `tests/` — pytest suite over the logic that needs no audio or model (`requirements-dev.txt`, `pytest.ini`)
@@ -168,6 +223,8 @@ the model's output. Those need real audio and a running model.
 - `recordings/` — drop new Craigbot `.zip` files here
 - `artifacts/` — everything the pipeline generates: `world_lore.md`, `npcs.md`, `allies.md`, plus `recaps/` and `characters/`
 - `archive/` — processed `.zip` files, renamed to the session date
+- `backups/` — earlier `artifacts/` folders set aside by `inkwell.rebuild`
+- `google_credentials.json`, `google_token.json` — Google Docs sync client and sign-in (gitignored)
 - `temp_audio/`, `transcript_raw.md`, `transcript_cleaned.md`, `session_data.json` — working files produced during a run; all but the transcripts are cleaned up on success
 
 ## License
