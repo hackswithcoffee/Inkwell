@@ -66,6 +66,27 @@ def to_allies(val, exclude=()) -> list:
     return allies
 
 
+def resolve_party_name(raw_name, roster=()):
+    """Map a loosely named character back to its roster name, or None.
+
+    Exact match first, then whole-word containment either direction
+    ("Bramble" -> "Bramble Goran", "Caeli's character" -> "Caeli").
+    """
+    raw_name = str(raw_name or "").strip()
+    if not raw_name:
+        return None
+    canonical = [str(n).strip() for n in roster if str(n).strip()]
+    match = next((c for c in canonical if c.lower() == raw_name.lower()), None)
+    if match is None:
+        match = next(
+            (c for c in canonical
+             if re.search(r"\b" + re.escape(c) + r"\b", raw_name, re.IGNORECASE)
+             or re.search(r"\b" + re.escape(raw_name) + r"\b", c, re.IGNORECASE)),
+            None,
+        )
+    return match
+
+
 def to_character_developments(val, roster=()) -> list:
     """Normalize per-character developments, keeping ONLY real party members.
 
@@ -75,26 +96,15 @@ def to_character_developments(val, roster=()) -> list:
     produces ("Caeli's character", "Bramble") back to the canonical roster
     name so a character's history stays in one file instead of fragmenting.
     """
-    canonical = [str(n).strip() for n in roster if str(n).strip()]
     developments = []
     seen = set()
     for item in val if isinstance(val, list) else []:
         if not isinstance(item, dict):
             continue
-        raw_name = str(item.get("name", "")).strip()
         development = to_text(item.get("development", ""))
-        if not raw_name or not development:
+        if not development:
             continue
-        # Resolve to a roster name: exact match first, then whole-word containment
-        # either direction ("Bramble" -> "Bramble Goran", "Caeli's character" -> "Caeli").
-        match = next((c for c in canonical if c.lower() == raw_name.lower()), None)
-        if match is None:
-            match = next(
-                (c for c in canonical
-                 if re.search(r"\b" + re.escape(c) + r"\b", raw_name, re.IGNORECASE)
-                 or re.search(r"\b" + re.escape(raw_name) + r"\b", c, re.IGNORECASE)),
-                None,
-            )
+        match = resolve_party_name(item.get("name", ""), roster)
         if match is None or match in seen:
             continue
         seen.add(match)

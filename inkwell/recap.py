@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import config
+from .extractor.context import character_slug
 
 
 CRAIG_TIMESTAMP_RE = re.compile(r"_(\d{4})-(\d{1,2})-(\d{1,2})_(\d{1,2})-(\d{1,2})-(\d{1,2})")
@@ -137,34 +138,78 @@ def update_allies_roster(allies: list, display_date: str) -> None:
 
 def character_file(name: str) -> Path:
     """Path to a character's chronicle file, derived from their name."""
-    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_") or "unnamed"
-    return config.CHARACTERS_DIR / f"{slug}.md"
+    return config.CHARACTERS_DIR / f"{character_slug(name)}.md"
 
 
-def update_character_files(developments: list, date_str: str) -> None:
+def _origin_block(origin: dict, display_date: str) -> str:
+    fields = [
+        f"**{label}:** {origin[key]}"
+        for label, key in (("Player", "player"), ("Race", "race"), ("Class", "class"))
+        if str(origin.get(key, "")).strip()
+    ]
+    block = f"# {origin['name']}\n\n"
+    if fields:
+        block += "\n".join(fields) + "\n\n"
+    block += f"---\n\n## Origin — {display_date}\n\n{origin['origin'].strip()}\n"
+    if str(origin.get("lost", "")).strip():
+        block += f"\n**Lost:** {origin['lost'].strip()}\n"
+    return block + "\n---\n"
+
+
+def write_character_origins(origins: list, display_date: str) -> set:
+    """Open each new character's chronicle with their Origin. Returns who got one.
+
+    Never replaces an Origin already there. A chronicle that exists without one
+    (a character first seen before anything about them was established) keeps
+    its dated updates, moved below the new Origin.
+    """
+    written = set()
+    config.CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
+    for origin in origins or []:
+        if not isinstance(origin, dict):
+            continue
+        name = str(origin.get("name", "")).strip()
+        if not name or not str(origin.get("origin", "")).strip():
+            continue
+        path = character_file(name)
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        if re.search(r"^## Origin", existing, re.MULTILINE):
+            continue
+        updates = existing[existing.index("\n## Update"):] if "\n## Update" in existing else ""
+        path.write_text(_origin_block({**origin, "name": name}, display_date) + updates, encoding="utf-8")
+        written.add(name)
+    if written:
+        print(f"Wrote origin(s) for {', '.join(sorted(written))}")
+    return written
+
+
+def update_character_files(developments: list, date_str: str, skip=()) -> None:
     """Append this session's developments to each character's own chronicle.
 
     One file per party member, appended to over the life of the campaign so
     each character accumulates a readable arc — who they were, what they chose,
     how they changed — rather than that history living scattered across recaps.
 
-    Only appends. A character's hand-written origin section is never rewritten,
-    and a character with nothing notable this session is left untouched rather
-    than padded with an empty entry.
+    Only appends. A character's Origin section is never rewritten, and a
+    character with nothing notable this session is left untouched rather than
+    padded with an empty entry. `skip` names characters whose Origin was
+    written from this same session, so it isn't told twice.
     """
     if not developments:
         return
     config.CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
+    count = 0
     for entry in developments:
         if not isinstance(entry, dict):
             continue
         name = str(entry.get("name", "")).strip()
         development = str(entry.get("development", "")).strip()
-        if not name or not development:
+        if not name or not development or name in skip:
             continue
         path = character_file(name)
         if not path.exists():
             path.write_text(f"# {name}\n\n---\n", encoding="utf-8")
         with open(path, "a", encoding="utf-8") as f:
             f.write(f"\n## Update {date_str}\n{development}\n")
-    print(f"Updated {len(developments)} character file(s) in {config.CHARACTERS_DIR}")
+        count += 1
+    print(f"Updated {count} character file(s) in {config.CHARACTERS_DIR}")

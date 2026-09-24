@@ -82,6 +82,14 @@ def stub_model(monkeypatch):
                 {"name": "Caeli's character", "development": "Swore an oath to the kenku"},
                 {"name": "Jeff", "development": "DM entries must be dropped"},
             ]})
+        if json_schema is passes.ORIGIN_FACTS_SCHEMA:
+            return json.dumps({"facts": [
+                {"name": "Caeli", "fact": "Is a changeling warlock"},
+                {"name": "Caeli", "fact": "Lost her name to an archfey"},
+            ]})
+        if json_schema is passes.ORIGIN_SCHEMA:
+            return json.dumps({"race": "Changeling", "class": "Warlock", "lost": "her name",
+                               "origin": "A changeling who bargained away her name."})
         if json_schema is passes.EXTRACTION_SCHEMA:
             return json.dumps({
                 "key_decisions": ["Refused the hag's bargain"], "loot_found": ["1x Rope"],
@@ -97,6 +105,7 @@ def stub_model(monkeypatch):
 
 def test_extract_data_writes_session_json(tmp_path, monkeypatch, stub_model):
     monkeypatch.setattr(passes, "REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr(passes, "needs_origin", lambda name: True)
     monkeypatch.setattr(passes, "load_players",
                         lambda: {"smokedbeef28": "Caeli (Daniel)", "cleverpotato": "Jeff (DM)"})
     transcript = tmp_path / "t.md"
@@ -111,4 +120,8 @@ def test_extract_data_writes_session_json(tmp_path, monkeypatch, stub_model):
     assert data["character_developments"] == [
         {"name": "Caeli", "development": "Swore an oath to the kenku."}
     ]
+    assert data["character_origins"] == [{
+        "name": "Caeli", "player": "Daniel", "race": "Changeling", "class": "Warlock",
+        "lost": "her name", "origin": "A changeling who bargained away her name.",
+    }]
     assert passes.EXTRACTION_SCHEMA in stub_model and passes.CHARACTER_SCHEMA in stub_model

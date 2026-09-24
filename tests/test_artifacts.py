@@ -76,3 +76,37 @@ class TestUpdateCharacterFiles:
     def test_empty_developments_write_nothing(self, artifacts):
         recap.update_character_files([], "08_31_2026")
         assert list((artifacts / "characters").iterdir()) == []
+
+
+class TestWriteCharacterOrigins:
+    ORIGIN = {"name": "Caeli", "player": "Daniel", "race": "Changeling", "class": "Warlock",
+              "lost": "her name", "origin": "Found the gap in the fence."}
+
+    def test_new_character_opens_with_an_origin(self, artifacts):
+        written = recap.write_character_origins([self.ORIGIN], "July 18, 2026")
+        text = (artifacts / "characters" / "caeli.md").read_text()
+        assert written == {"Caeli"}
+        assert text.startswith("# Caeli\n\n**Player:** Daniel\n**Race:** Changeling\n**Class:** Warlock")
+        assert "## Origin — July 18, 2026\n\nFound the gap in the fence." in text
+        assert "**Lost:** her name" in text
+
+    def test_existing_origin_is_never_replaced(self, artifacts):
+        path = artifacts / "characters" / "caeli.md"
+        path.write_text("# Caeli\n\n## Origin\nBorn in the marshes.\n")
+        assert recap.write_character_origins([self.ORIGIN], "July 18, 2026") == set()
+        assert "Born in the marshes." in path.read_text()
+
+    def test_updates_written_before_an_origin_move_below_it(self, artifacts):
+        recap.update_character_files([{"name": "Caeli", "development": "Grew."}], "07_18_2026")
+        recap.write_character_origins([self.ORIGIN], "August 16, 2026")
+        text = (artifacts / "characters" / "caeli.md").read_text()
+        assert text.index("## Origin") < text.index("## Update 07_18_2026\nGrew.")
+
+    def test_origin_session_is_not_also_appended_as_an_update(self, artifacts):
+        written = recap.write_character_origins([self.ORIGIN], "July 18, 2026")
+        recap.update_character_files(
+            [{"name": "Caeli", "development": "Found the gap."}, {"name": "Dalki", "development": "Arrived."}],
+            "07_18_2026", skip=written,
+        )
+        assert "## Update" not in (artifacts / "characters" / "caeli.md").read_text()
+        assert "## Update 07_18_2026\nArrived." in (artifacts / "characters" / "dalki.md").read_text()

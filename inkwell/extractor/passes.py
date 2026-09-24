@@ -4,10 +4,11 @@ import os
 import sys
 
 from .config import EXTRACTION_MODEL, NARRATIVE_MODEL, REPO_ROOT
-from .context import chunk_transcript, load_character_facts, load_rules_primer
+from .context import chunk_transcript, load_character_facts, load_rules_primer, needs_origin
 from .normalize import (
     _merge_developments,
     _parse_json_object,
+    resolve_party_name,
     to_allies,
     to_character_developments,
     to_list,
@@ -72,6 +73,132 @@ EXTRACTION_SCHEMA = {
     "required": ["key_decisions", "loot_found", "purchases", "npcs", "lore", "allies"],
 }
 
+
+
+ORIGIN_FACTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "fact": {"type": "string"}},
+                "required": ["name", "fact"],
+            },
+        },
+    },
+    "required": ["facts"],
+}
+
+ORIGIN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "race": {"type": "string"},
+        "class": {"type": "string"},
+        "lost": {"type": "string"},
+        "origin": {"type": "string"},
+    },
+    "required": ["race", "class", "lost", "origin"],
+}
+
+
+def extract_origins(chunks, party_note, new_names, players_by_name, primer_block="") -> list:
+    """Write an Origin for each party member whose chronicle does not have one yet.
+
+    Two steps, for the same reason Pass 4 reads raw chunks: who a character is
+    gets established in scattered asides across a whole session, and a single
+    summary compresses those away. So facts are gathered chunk by chunk, then
+    each character's facts are written up once. Runs only for characters
+    without an Origin — normally everyone at session zero, and afterwards only
+    someone who joins mid-campaign.
+    """
+    if not new_names:
+        return []
+    names_str = ", ".join(sorted(new_names))
+    system = (
+        "You are a precise data extractor for D&D session logs. "
+        "You return only valid JSON. No markdown, no explanation, no extra text. Only JSON."
+    ) + primer_block
+
+    facts = {name: [] for name in new_names}
+    print(f"Pass 5: Gathering origins for {names_str} across {len(chunks)} chunks...")
+    for i, chunk in enumerate(chunks, 1):
+        user = (
+            f"{party_note}\n\n"
+            f"Read section {i} of {len(chunks)} of a D&D session transcript. Collect every fact this "
+            f"section establishes about who these party members ARE — their background, not what they "
+            f"did this session: {names_str}.\n\n"
+            "Look for: race or ancestry; class, subclass, and patron; where they come from; family; how "
+            "they came to be here; their past; a defining bargain, secret, or loss; personality as the "
+            "player describes it.\n\n"
+            "Rules:\n"
+            "- Only facts actually stated in this section, by the player or the Dungeon Master. A player "
+            "describing their own character is the strongest source.\n"
+            "- THE ASKER IS NOT THE SUBJECT: a player asking about another character's race or past is "
+            "not describing themselves.\n"
+            "- One short sentence per fact. Leave out anyone with nothing established here; an empty "
+            "list is a perfectly good answer.\n\n"
+            'Return ONLY a raw JSON object: {"facts": [{"name": "party member\'s name", "fact": "one fact"}]}\n\n'
+            f"TRANSCRIPT SECTION:\n{chunk}"
+        )
+        try:
+            parsed = _parse_json_object(ollama_generate(
+                system, user, model=EXTRACTION_MODEL,
+                temperature=0.1, max_tokens=1024, json_schema=ORIGIN_FACTS_SCHEMA,
+            ))
+            for item in parsed.get("facts", []):
+                if not isinstance(item, dict):
+                    continue
+                name = resolve_party_name(item.get("name"), new_names)
+                fact = to_text(item.get("fact", ""))
+                if name and fact and fact.lower() not in (f.lower() for f in facts[name]):
+                    facts[name].append(fact)
+        except Exception as e:
+            print(f"  Chunk {i}/{len(chunks)} failed (non-fatal): {e}", file=sys.stderr)
+
+    origins = []
+    for name in sorted(new_names):
+        if not facts[name]:
+            print(f"  {name}: nothing established yet — no origin written")
+            continue
+        fact_list = "\n".join(f"- {f}" for f in facts[name])
+        user = (
+            f"{party_note}\n\n"
+            f"Below are facts established about {name} during a D&D session, gathered section by "
+            f"section from the transcript. Write {name}'s origin for their chronicle.\n\n"
+            f"FACTS:\n{fact_list}\n\n"
+            "Return a JSON object with:\n"
+            '- "race": their race or ancestry, or "" if never stated\n'
+            '- "class": their class, with subclass or patron if stated, or "" if never stated\n'
+            '- "lost": anything they are established to have lost or had taken from them, or "" if none\n'
+            '- "origin": one to three paragraphs of third-person prose, as the Royal Scribe Inkwell '
+            f"would record it, telling who {name} is and how they came to this point. Use ONLY the facts "
+            "above — do not invent a hometown, family member, motive, or event they do not state. Where "
+            "facts conflict, prefer what the player said about their own character. Short is fine when "
+            "little is known."
+        )
+        try:
+            parsed = _parse_json_object(ollama_generate(
+                system, user, model=NARRATIVE_MODEL,
+                temperature=0.3, max_tokens=1024, json_schema=ORIGIN_SCHEMA,
+            ))
+        except Exception as e:
+            print(f"  {name}: origin failed (non-fatal): {e}", file=sys.stderr)
+            continue
+        origin = to_text(parsed.get("origin", ""))
+        if not origin:
+            continue
+        origins.append({
+            "name": name,
+            "player": players_by_name.get(name, ""),
+            "race": to_text(parsed.get("race", "")),
+            "class": to_text(parsed.get("class", "")),
+            "lost": to_text(parsed.get("lost", "")),
+            "origin": origin,
+        })
+        print(f"  {name}: origin written from {len(facts[name])} fact(s)")
+    print(f"Pass 5 complete: {len(origins)} origin(s)")
+    return origins
 
 
 def extract_character_developments(chunks, party_note, party_names, primer_block="", character_facts="") -> list:
@@ -158,6 +285,12 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
     }
 
     character_facts = load_character_facts()
+    # The player's real name, for the chronicle's header — never the DM's.
+    players_by_name = {}
+    for v in players.values():
+        display, paren, is_dm = parse_player_entry(v)
+        if display and not is_dm:
+            players_by_name[display] = paren if paren and paren != display else ""
     rules_primer = load_rules_primer()
     primer_block = f"\n\n--- D&D RULES PRIMER (use to interpret transcript correctly) ---\n{rules_primer}\n--- END RULES PRIMER ---" if rules_primer else ""
     if rules_primer:
@@ -476,6 +609,12 @@ SESSION SUMMARY:
         chunks, party_note, party_names, primer_block, character_facts
     )
 
+    # ── PASS 5: Origins for characters who don't have one yet ─────────────────
+    character_origins = extract_origins(
+        chunks, party_note, {n for n in party_names if needs_origin(n)},
+        players_by_name, primer_block,
+    )
+
     # ── Assemble final output ──────────────────────────────────────────────────
     loot_found = to_list(extraction.get("loot_found", []))
     purchases = to_list(extraction.get("purchases", []))
@@ -494,7 +633,8 @@ SESSION SUMMARY:
         "allies": to_allies(extraction.get("allies", []), exclude=roster_names),
         # Sourced from the per-chunk pass, not the compressed digest — see
         # extract_character_developments for why.
-        "character_developments": character_developments
+        "character_developments": character_developments,
+        "character_origins": character_origins,
     }
 
     output_path = os.path.join(REPO_ROOT, "session_data.json")

@@ -17,13 +17,15 @@ from .recap import (
     append_lore_and_npcs,
     update_allies_roster,
     update_character_files,
+    write_character_origins,
 )
-from .sync import sync_to_drive
+from .gdocs import sync_artifacts
 from .extractor.ollama import missing_models
 
 
-def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str) -> None:
-    shutil.move(str(zip_file), config.ARCHIVE_DIR / f"{date_str}.zip")
+def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str, archive: bool = True) -> None:
+    if archive:
+        shutil.move(str(zip_file), config.ARCHIVE_DIR / f"{date_str}.zip")
     shutil.rmtree(temp_dir)
     if json_path.exists():
         json_path.unlink()
@@ -50,10 +52,23 @@ def check_ollama() -> None:
         sys.exit(1)
 
 
-def run_pipeline(session_date: Optional[str] = None):
+def run_pipeline(
+    session_date: Optional[str] = None,
+    zip_file: Optional[Path] = None,
+    archive: bool = True,
+    force_transcribe: bool = False,
+    sync: bool = True,
+):
+    """Process one recording. The defaults are the watcher's normal run.
+
+    The keyword options exist for the archive rebuild: it names each archived
+    zip itself, must not move it, must transcribe it fresh (the reuse check
+    goes by mtime, and an archived zip is older than any transcript), and
+    syncs once at the end instead of after every session.
+    """
     print("Inkwell Scribe Pipeline Starting...")
 
-    zip_file = get_latest_zip()
+    zip_file = zip_file or get_latest_zip()
     if not zip_file:
         print("No .zip found in recordings/")
         return
@@ -74,7 +89,7 @@ def run_pipeline(session_date: Optional[str] = None):
     # expensive half — hours for a long session — and the watcher now retries a
     # failed run, so without this a crash during extraction would pay for the
     # whole transcription again to reach the same point.
-    if transcript_is_current(zip_file):
+    if not force_transcribe and transcript_is_current(zip_file):
         print(f"Reusing existing transcript ({config.CLEANED_TRANSCRIPT.name}) — newer than the zip; skipping transcription.")
         temp_dir = config.TEMP_AUDIO_DIR
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -97,8 +112,10 @@ def run_pipeline(session_date: Optional[str] = None):
 
     append_lore_and_npcs(session_data, date_str)
     update_allies_roster(session_data.get("allies", []), display_date)
-    update_character_files(session_data.get("character_developments", []), date_str)
-    sync_to_drive(recap_path)
-    cleanup(zip_file, temp_dir, json_path, date_str)
+    new_origins = write_character_origins(session_data.get("character_origins", []), display_date)
+    update_character_files(session_data.get("character_developments", []), date_str, skip=new_origins)
+    if sync:
+        sync_artifacts()
+    cleanup(zip_file, temp_dir, json_path, date_str, archive=archive)
 
     print("Inkwell Processing Complete!")

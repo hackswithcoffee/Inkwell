@@ -18,6 +18,27 @@ def load_rules_primer() -> str:
 
 
 
+def characters_dir() -> str:
+    return os.path.join(REPO_ROOT, "artifacts", "characters")
+
+
+def character_slug(name: str) -> str:
+    """The filename stem of a character's chronicle — shared with the writer."""
+    return re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_") or "unnamed"
+
+
+def needs_origin(name: str) -> bool:
+    """True when a party member has no chronicle yet, or one with no Origin section."""
+    path = os.path.join(characters_dir(), f"{character_slug(name)}.md")
+    if not os.path.exists(path):
+        return True
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return not re.search(r"^## Origin", f.read(), re.MULTILINE)
+    except OSError:
+        return True
+
+
 def load_character_facts() -> str:
     """Build a compact fact sheet from characters/*.md for attribution grounding.
 
@@ -26,7 +47,7 @@ def load_character_facts() -> str:
     or that a lost sense of direction belongs to the rogue who lost it — it just
     credits whoever happens to dominate that chunk.
     """
-    base = os.path.join(REPO_ROOT, "artifacts", "characters")
+    base = characters_dir()
     if not os.path.isdir(base):
         return ""
     entries = []
@@ -48,7 +69,7 @@ def load_character_facts() -> str:
 
         descriptors = [d for d in (field("Race"), field("Class")) if d]
         desc = " ".join(descriptors)
-        lost = field("Lost at the Witchlight Carnival")
+        lost = field("Lost") or field("Lost at the Witchlight Carnival")
         if lost and not lost.lower().startswith("not established"):
             lost = lost.rstrip(".")
             desc = f"{desc}; lost {lost}" if desc else f"lost {lost}"

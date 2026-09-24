@@ -97,11 +97,13 @@ CLEANED_TRANSCRIPT = PROJECT_ROOT / "transcript_cleaned.md"
 LOCAL_SESSION_JSON = PROJECT_ROOT / "session_data.json"
 RULES_PRIMER_FILE = PROJECT_ROOT / "summarizer_primer.md"
 
-# Optional: local folder synced by the Google Drive desktop client. If set, the
-# recap and the three running master files are copied there after every
-# successful run, for feeding into external tools (e.g. a NotebookLM/Gemini
-# notebook). Not required — the pipeline runs fine without it.
-DRIVE_SYNC_DIR = os.environ.get("DRIVE_SYNC_DIR")
+# Optional: mirror every artifact into Google Docs (see inkwell/gdocs.py) so a
+# NotebookLM notebook built on them updates itself. Off until the OAuth client
+# file below exists; both files are gitignored.
+GOOGLE_CREDENTIALS_FILE = PROJECT_ROOT / "google_credentials.json"
+GOOGLE_TOKEN_FILE = PROJECT_ROOT / "google_token.json"
+GDOCS_FOLDER = os.environ.get("GDOCS_FOLDER", "Inkwell Notebook")
+BACKUPS_DIR = PROJECT_ROOT / "backups"
 
 
 def _ensure_directories() -> None:
