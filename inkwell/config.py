@@ -73,7 +73,12 @@ _check_required_env_vars()
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 MAX_SIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2GB
-WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
+# Full large-v3, not turbo. On Craig's mostly-silent per-speaker tracks turbo
+# kept stalling on the silence: 518s vs 78s for the same 20-minute slice, and
+# it misheard more names ("FAYWAS" for Feywild). large-v3 did a 3h19m track in
+# about 12 minutes. At ~3GB it fits easily, and it is out of memory before the
+# extractor loads its model.
+WHISPER_MODEL = "mlx-community/whisper-large-v3-mlx"
 AUDIO_EXTENSIONS = ('.wav', '.flac', '.aac', '.mp3', '.m4a')
 
 RECORDINGS_DIR = PROJECT_ROOT / "recordings"
