@@ -194,6 +194,7 @@ If the sign-in lapses or the vault can't be reached, the run still completes, bu
 - **Out-of-character filtering:** Scheduling chatter, audio glitches, and fourth-wall breaks are filtered out at the LLM extraction step and do not appear in the recap. Mechanical transcription noise is filtered earlier, when the cleaned transcript is written.
 - **Continuity:** The most recently modified recap in `artifacts/recaps/` is passed to the extractor as context for the next session, along with the current allies roster.
 - **Names:** Discord usernames never appear in a recap — the extractor is given the list from `players.json` and told to exclude them. Character names and real names are both fine, so a player whose character isn't named yet is still written about by their given name. A track with no `players.json` entry falls back to its raw Discord username as the speaker label and warns during transcription; add the entry rather than letting it reach a recap.
+- **Proper-noun spelling:** Whisper spells a name the way it sounds, and differently each time (one archfey came out as Zabildna, Zibilna, and Zbilna). `glossary.json` maps each canonical spelling to the variants seen for it. Every extraction prompt gets the canonical list, and the output is then respelled deterministically: whole words only, case-insensitive, longest variant first. When a new misspelling turns up, add it to `glossary.json` and run `.venv/bin/python -m inkwell.respell`. That fixes every existing artifact (after copying `artifacts/` into `backups/`) and re-syncs the Docs.
 - **Character chronicles:** Each party member has a file in `artifacts/characters/`, named from their character name. The first session they appear in opens it with an **Origin**: player, race, class, anything they lost, and a short account of who they are, written only from what the table actually established. Facts are gathered from the raw transcript chunk by chunk, then written up once. After that, the extractor records only what actually changed for them in a session — a level gained, a choice made, an injury, a bargain struck, a relationship formed — and appends it under a dated heading. The notes from every chunk are condensed into one 2–4 sentence entry per session, written in story terms rather than rules, and checked against the chronicle so far, so the entry doesn't repeat the Origin or an earlier session. A character with nothing notable that session is left untouched rather than padded with filler. The Origin is never rewritten, only appended below (only `inkwell.rebuild` regenerates it). The DM never gets a file. The intent is that each character accumulates a readable arc, so there's a narrative record of their journey if they die or when the campaign ends.
 - **Google Docs sync:** After every successful run, each artifact is mirrored into Google Docs, and each Doc is updated in place so NotebookLM sources follow along. Unchanged files are skipped. It's optional: if it isn't set up, the run says so and skips it; a lapsed sign-in or no network warns but doesn't fail the run. See **Google Docs sync** above.
 
@@ -225,6 +226,7 @@ the model's output. Those need real audio and a running model.
   - `gdocs.py` — the Google Docs mirror for the NotebookLM notebook (`python -m inkwell.gdocs [--auth | --load-client JSON]`)
   - `vault.py` — reads the Google secrets from the baobox OpenBao vault through the `inkwell` AppRole
   - `rebuild.py` — regenerate every artifact from `archive/` (`python -m inkwell.rebuild`)
+  - `respell.py` — apply `glossary.json` to existing artifacts (`python -m inkwell.respell [--dry-run]`)
   - `consolidate.py` — condense character entries written before consolidation existed (`python -m inkwell.consolidate [--dry-run]`)
   - `pipeline.py` — the run, start to finish
 - `inkwell/extractor/` — the Ollama passes: `players.py`, `ollama.py`, `normalize.py`, `context.py`, `passes.py`
@@ -232,6 +234,7 @@ the model's output. Those need real audio and a running model.
 - `scripts/` — the Drive watcher and its launchd setup
 - `summarizer_primer.md` — D&D rules cheat sheet that grounds the summarizer's terminology
 - `dnd rules/` — SRD reference content used by the primer
+- `glossary.json` — canonical spellings of the campaign's proper nouns, with the variants to correct
 - `players.json` — your party roster (gitignored; copy from `players.example.json`)
 - `recordings/` — drop new Craigbot `.zip` files here
 - `artifacts/` — everything the pipeline generates: `world_lore.md`, `npcs.md`, `allies.md`, plus `recaps/` and `characters/`

@@ -14,6 +14,7 @@ from .normalize import (
     to_list,
     to_text,
 )
+from .glossary import glossary_note, load_glossary, respell
 from .ollama import ollama_generate
 from .players import _build_party_context, load_players, parse_player_entry
 
@@ -350,6 +351,8 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
 
     players = load_players()
     party_note, DIARY_PRIMER, usernames_str = _build_party_context(players)
+    glossary = load_glossary()
+    party_note += glossary_note(glossary)
     # Everyone at the table — used to keep players out of the allies roster.
     roster_names = {parse_player_entry(v)[0] for v in players.values() if parse_player_entry(v)[0]}
     # Party only — the DM gets no character file and no development entries.
@@ -705,6 +708,8 @@ SESSION SUMMARY:
         "character_developments": character_developments,
         "character_origins": character_origins,
     }
+    # The prompt asks for these spellings; this makes sure of them.
+    session_data = respell(session_data, glossary)
 
     output_path = os.path.join(REPO_ROOT, "session_data.json")
     with open(output_path, "w", encoding="utf-8") as f:
