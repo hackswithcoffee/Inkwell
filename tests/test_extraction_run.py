@@ -125,3 +125,12 @@ def test_extract_data_writes_session_json(tmp_path, monkeypatch, stub_model):
         "lost": "her name", "origin": "A changeling who bargained away her name.",
     }]
     assert passes.EXTRACTION_SCHEMA in stub_model and passes.CHARACTER_SCHEMA in stub_model
+
+
+@pytest.mark.parametrize("echo", ["P! Then more.", "**P!** Then more.", '"P!\n\nThen more.', "“P!” Then more."])
+def test_echoed_diary_opening_is_not_printed_twice(echo):
+    assert passes.join_diary("P!", echo) == "P! Then more."
+
+
+def test_diary_without_an_echo_is_left_alone():
+    assert passes.join_diary("P!", " The day began.") == "P! The day began."

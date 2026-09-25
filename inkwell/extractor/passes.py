@@ -249,6 +249,21 @@ def extract_character_developments(chunks, party_note, party_names, primer_block
 
 
 
+ECHO_WRAPPERS = " \n\t*\"'“”‘’"
+
+
+def join_diary(primer: str, continuation: str) -> str:
+    """Prefix the diary's fixed opening, dropping it if the model echoed it back.
+
+    The model sometimes repeats the opening before continuing — plain, bold, or
+    wrapped in quotes — which would print the first line twice.
+    """
+    stripped = continuation.lstrip(ECHO_WRAPPERS)
+    if stripped.startswith(primer):
+        continuation = stripped[len(primer):].lstrip(ECHO_WRAPPERS)
+    return primer + " " + continuation.lstrip(" *—-")
+
+
 def extract_data(transcript_path, context_path=None, allies_path=None):
     if not os.path.exists(transcript_path):
         print(f"Error: Transcript not found at {transcript_path}")
@@ -523,13 +538,7 @@ Continue this diary entry in Inkwell's voice — do not rewrite the opening, sim
         # reliably invented whole battle scenes, dialogue, and character classes not
         # present in the summaries, even with explicit anti-fabrication instructions.
         diary_continuation = ollama_generate(narrative_system, narrative_user, model=NARRATIVE_MODEL, temperature=0.4, max_tokens=4096)
-        # Strip any repeated primer the model echoed back (plain or bold).
-        stripped = diary_continuation.lstrip()
-        for prefix in (DIARY_PRIMER, f"**{DIARY_PRIMER}"):
-            if stripped.startswith(prefix):
-                diary_continuation = stripped[len(prefix):]
-                break
-        diary_entry = DIARY_PRIMER + " " + diary_continuation.lstrip(" *—-")
+        diary_entry = join_diary(DIARY_PRIMER, diary_continuation)
     except Exception as e:
         print(f"Pass 2 error: {e}")
         sys.exit(1)
