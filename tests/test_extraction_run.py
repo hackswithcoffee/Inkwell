@@ -82,6 +82,8 @@ def stub_model(monkeypatch):
                 {"name": "Caeli's character", "development": "Swore an oath to the kenku"},
                 {"name": "Jeff", "development": "DM entries must be dropped"},
             ]})
+        if json_schema is passes.CONSOLIDATE_SCHEMA:
+            return json.dumps({"development": "Swore an oath to the kenku."})
         if json_schema is passes.ORIGIN_FACTS_SCHEMA:
             return json.dumps({"facts": [
                 {"name": "Caeli", "fact": "Is a changeling warlock"},
@@ -125,6 +127,7 @@ def test_extract_data_writes_session_json(tmp_path, monkeypatch, stub_model):
         "lost": "her name", "origin": "A changeling who bargained away her name.",
     }]
     assert passes.EXTRACTION_SCHEMA in stub_model and passes.CHARACTER_SCHEMA in stub_model
+    assert passes.CONSOLIDATE_SCHEMA in stub_model
 
 
 @pytest.mark.parametrize("echo", ["P! Then more.", "**P!** Then more.", '"P!\n\nThen more.', "“P!” Then more."])

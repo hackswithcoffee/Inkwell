@@ -39,6 +39,16 @@ def needs_origin(name: str) -> bool:
         return True
 
 
+def read_chronicle(name: str) -> str:
+    """A character's chronicle as it stands, or "" if they have none yet."""
+    path = os.path.join(characters_dir(), f"{character_slug(name)}.md")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
 def load_character_facts() -> str:
     """Build a compact fact sheet from characters/*.md for attribution grounding.
 

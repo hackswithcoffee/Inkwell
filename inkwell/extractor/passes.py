@@ -4,7 +4,7 @@ import os
 import sys
 
 from .config import EXTRACTION_MODEL, NARRATIVE_MODEL, REPO_ROOT
-from .context import chunk_transcript, load_character_facts, load_rules_primer, needs_origin
+from .context import chunk_transcript, load_character_facts, load_rules_primer, needs_origin, read_chronicle
 from .normalize import (
     _merge_developments,
     _parse_json_object,
@@ -201,6 +201,60 @@ def extract_origins(chunks, party_note, new_names, players_by_name, primer_block
     return origins
 
 
+CONSOLIDATE_SCHEMA = {
+    "type": "object",
+    "properties": {"development": {"type": "string"}},
+    "required": ["development"],
+}
+
+
+def consolidate_development(name, notes, chronicle="", party_note="") -> str:
+    """Rewrite one session's merged notes on a character as a short chronicle entry.
+
+    Pass 4 reads chunk by chunk to keep recall high, and the price is a pile of
+    overlapping fragments per character: restated backstory, the same beat seen
+    from three chunks, dice math, the odd contradiction. This turns that pile
+    into the 2–4 sentences a reader wants, checked against what the chronicle
+    already says so an entry only records what is new. Returns "" when nothing
+    new survives, and the notes unchanged if the call fails.
+    """
+    system = (
+        "You edit a D&D character's chronicle. You return only valid JSON. "
+        "No markdown, no explanation, no extra text. Only JSON."
+    )
+    user = (
+        f"{party_note}\n\n"
+        f"{name}'S CHRONICLE SO FAR:\n{chronicle.strip() or '(none yet)'}\n\n"
+        f"NOTES on what changed for {name} this session, gathered section by section from the "
+        f"transcript (they overlap and repeat):\n{notes.strip()}\n\n"
+        f"Rewrite the notes as this session's entry in {name}'s chronicle.\n"
+        "Rules:\n"
+        "- Two to four plain sentences, past tense, third person, in the order things happened.\n"
+        f"- Keep only what changed or came to light for {name} this session: a choice they made, a "
+        "level gained and what came with it, an injury or lasting effect, a bargain, a title or reward, "
+        "a relationship formed or broken, something revealed about their past.\n"
+        "- Leave out anything the chronicle above already records, including their Origin.\n"
+        "- Say effects in story terms, not rules: 'plagued by nightmares', not 'two levels of "
+        "exhaustion'; 'granted butterfly wings', not '+5 to Charisma checks'.\n"
+        "- If two notes contradict each other, keep the more specific one; if you cannot tell which "
+        "is right, leave that detail out.\n"
+        "- Use only what the notes say. Add nothing.\n"
+        '- If nothing new is left, return an empty string.\n\n'
+        'Return ONLY a raw JSON object: {"development": "the entry"}'
+    )
+    try:
+        parsed = _parse_json_object(ollama_generate(
+            system, user, model=NARRATIVE_MODEL,
+            temperature=0.2, max_tokens=512, json_schema=CONSOLIDATE_SCHEMA,
+        ))
+    except Exception as e:
+        print(f"  {name}: consolidation failed, keeping the raw notes ({e})", file=sys.stderr)
+        return notes
+    if "development" not in parsed:
+        return notes
+    return to_text(parsed["development"])
+
+
 def extract_character_developments(chunks, party_note, party_names, primer_block="", character_facts="") -> list:
     """Extract per-character developments from each RAW transcript chunk.
 
@@ -243,7 +297,13 @@ def extract_character_developments(chunks, party_note, party_names, primer_block
         except Exception as e:
             print(f"  Chunk {i}/{len(chunks)} failed (non-fatal): {e}", file=sys.stderr)
 
-    merged = _merge_developments(collected)
+    merged = []
+    for entry in _merge_developments(collected):
+        entry["development"] = consolidate_development(
+            entry["name"], entry["development"], read_chronicle(entry["name"]), party_note,
+        )
+        if entry["development"]:
+            merged.append(entry)
     print(f"Pass 4 complete: {len(merged)} character(s) with developments")
     return merged
 
