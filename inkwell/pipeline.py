@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import shutil
+import zipfile
 import urllib.error
 from pathlib import Path
 from typing import Optional
@@ -25,7 +26,15 @@ from .extractor.ollama import missing_models
 
 def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str, archive: bool = True) -> None:
     if archive:
-        shutil.move(str(zip_file), config.ARCHIVE_DIR / f"{date_str}.zip")
+        archive_path = config.ARCHIVE_DIR / f"{date_str}.zip"
+        shutil.move(str(zip_file), archive_path)
+        # Tuck the cleaned transcript into the archived zip so a future lookup has
+        # the session's words alongside its audio in one file. It is named for the
+        # session and sits next to the Craig tracks; a rebuild re-extracts the zip
+        # but transcribe_tracks ignores any non-audio file, so this is inert there.
+        if config.CLEANED_TRANSCRIPT.exists():
+            with zipfile.ZipFile(archive_path, "a", zipfile.ZIP_DEFLATED) as z:
+                z.write(config.CLEANED_TRANSCRIPT, arcname=f"{date_str}_cleaned_transcript.md")
     shutil.rmtree(temp_dir)
     if json_path.exists():
         json_path.unlink()
