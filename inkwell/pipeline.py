@@ -27,7 +27,20 @@ from .extractor.ollama import missing_models
 def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str, archive: bool = True) -> None:
     if archive:
         archive_path = config.ARCHIVE_DIR / f"{date_str}.zip"
-        shutil.move(str(zip_file), archive_path)
+        # Copy, don't move. A plain move is os.rename, which just relinks the
+        # inode without reading the data — so if the recording is a dataless
+        # cloud placeholder (e.g. a Google Drive File Stream file, which reports
+        # its full size via stat but holds no local bytes until read) the archive
+        # ends up an empty husk and the audio is lost. Copying reads every byte,
+        # which materializes such a placeholder, exactly as the watcher's own cp
+        # does on the way in.
+        # Record what the source zip holds before archiving. Opening it also
+        # rejects a source that is not a readable zip at all, before anything is
+        # deleted. (Reading only the central directory is cheap and does not
+        # require the entry data to be materialized.)
+        with zipfile.ZipFile(zip_file) as zsrc:
+            source_names = set(zsrc.namelist())
+        shutil.copyfile(zip_file, archive_path)
         # Tuck the cleaned transcript into the archived zip so a future lookup has
         # the session's words alongside its audio in one file. It is named for the
         # session and sits next to the Craig tracks; a rebuild re-extracts the zip
@@ -35,6 +48,22 @@ def cleanup(zip_file: Path, temp_dir: Path, json_path: Path, date_str: str, arch
         if config.CLEANED_TRANSCRIPT.exists():
             with zipfile.ZipFile(archive_path, "a", zipfile.ZIP_DEFLATED) as z:
                 z.write(config.CLEANED_TRANSCRIPT, arcname=f"{date_str}_cleaned_transcript.md")
+        # Verify the archive before deleting the source. Two distinct failures
+        # matter: a husk archive that silently dropped the audio tracks (every
+        # source entry must survive the copy), and a truncated or corrupt archive
+        # (testzip reads and CRC-checks every entry's data). Either one raises,
+        # which leaves the source in place and fails the run non-zero, so the
+        # watcher retries rather than marking a session done with its audio gone.
+        with zipfile.ZipFile(archive_path) as z:
+            missing = source_names - set(z.namelist())
+            bad = z.testzip()
+        if missing or bad is not None:
+            raise RuntimeError(
+                f"Archived zip {archive_path} did not verify "
+                f"(missing entries: {sorted(missing)}; bad entry: {bad}); "
+                f"leaving the source {zip_file} in place."
+            )
+        zip_file.unlink()
     shutil.rmtree(temp_dir)
     if json_path.exists():
         json_path.unlink()
