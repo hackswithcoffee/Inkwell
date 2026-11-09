@@ -96,6 +96,8 @@ RAW_TRANSCRIPT = PROJECT_ROOT / "transcript_raw.md"
 CLEANED_TRANSCRIPT = PROJECT_ROOT / "transcript_cleaned.md"
 LOCAL_SESSION_JSON = PROJECT_ROOT / "session_data.json"
 RULES_PRIMER_FILE = PROJECT_ROOT / "summarizer_primer.md"
+# Hand-written, so outside artifacts/: inkwell.rebuild moves that folder aside.
+MAPS_DIR = PROJECT_ROOT / "maps"
 
 # Optional: mirror every artifact into Google Docs (see inkwell/gdocs.py) so a
 # NotebookLM notebook built on them updates itself. Its OAuth client and sign-in

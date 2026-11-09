@@ -53,6 +53,14 @@ def test_planned_docs_titles_and_folders(artifacts):
     }
 
 
+def test_planned_docs_include_map_notes_but_not_the_picture(artifacts):
+    config.MAPS_DIR.mkdir()
+    (config.MAPS_DIR / "hither.md").write_text("# Map of Hither\n\nA swamp.\n")
+    (config.MAPS_DIR / "hither.webp").write_bytes(b"image")
+    plan = {key: (title, folder) for key, title, _, folder in gdocs.planned_docs()}
+    assert plan == {"map/hither": ("Map of Hither", "root")}
+
+
 def test_first_sync_creates_a_google_doc(artifacts):
     drive = FakeDrive()
     config.NPCS_FILE.write_text("## Update\nA kenku.\n")

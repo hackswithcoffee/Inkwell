@@ -32,6 +32,7 @@ craig_watcher_launchd.log
 
 # Campaign data — backed up separately, not in the code repo
 artifacts/
+maps/
 transcript_raw.md
 transcript_cleaned.md
 session_data.json

@@ -28,4 +28,5 @@ def artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LORE_FILE", root / "world_lore.md")
     monkeypatch.setattr(config, "NPCS_FILE", root / "npcs.md")
     monkeypatch.setattr(config, "ALLIES_FILE", root / "allies.md")
+    monkeypatch.setattr(config, "MAPS_DIR", tmp_path / "maps")
     return root

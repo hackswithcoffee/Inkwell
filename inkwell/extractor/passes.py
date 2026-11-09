@@ -4,7 +4,7 @@ import os
 import sys
 
 from .config import EXTRACTION_MODEL, NARRATIVE_MODEL, REPO_ROOT
-from .context import chunk_transcript, load_character_facts, load_rules_primer, needs_origin, read_chronicle
+from .context import chunk_transcript, load_character_facts, load_map_notes, load_rules_primer, needs_origin, read_chronicle
 from .normalize import (
     _merge_developments,
     _parse_json_object,
@@ -353,6 +353,7 @@ def extract_data(transcript_path, context_path=None, allies_path=None):
     party_note, DIARY_PRIMER, usernames_str = _build_party_context(players)
     glossary = load_glossary()
     party_note += glossary_note(glossary)
+    party_note += load_map_notes()
     # Everyone at the table — used to keep players out of the allies roster.
     roster_names = {parse_player_entry(v)[0] for v in players.values() if parse_player_entry(v)[0]}
     # Party only — the DM gets no character file and no development entries.

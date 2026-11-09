@@ -97,6 +97,9 @@ def planned_docs() -> list:
     ):
         if path.exists():
             docs.append((key, title, path, "root"))
+    for path in sorted(config.MAPS_DIR.glob("*.md")):
+        m = re.search(r"^#\s+(.+)$", path.read_text(encoding="utf-8"), re.MULTILINE)
+        docs.append((f"map/{path.stem}", m.group(1).strip() if m else path.stem, path, "root"))
     for path in sorted(config.RECAPS_DIR.glob("*_recap.md")):
         stem = path.name[: -len("_recap.md")]
         docs.append((f"recap/{stem}", _recap_title(stem), path, "recaps"))

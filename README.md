@@ -235,6 +235,7 @@ the model's output. Those need real audio and a running model.
 - `summarizer_primer.md` — D&D rules cheat sheet that grounds the summarizer's terminology
 - `dnd rules/` — SRD reference content used by the primer
 - `glossary.json` — canonical spellings of the campaign's proper nouns, with the variants to correct
+- `maps/` — campaign maps (gitignored): each picture sits beside a written `<name>.md`, which goes into every extraction prompt and mirrors to Google Docs. The models read only the text, so update the notes when the table learns something new. Keep them to what the table has established.
 - `players.json` — your party roster (gitignored; copy from `players.example.json`)
 - `recordings/` — drop new Craigbot `.zip` files here
 - `artifacts/` — everything the pipeline generates: `world_lore.md`, `npcs.md`, `allies.md`, plus `recaps/` and `characters/`

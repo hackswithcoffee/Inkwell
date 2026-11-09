@@ -18,6 +18,35 @@ def load_rules_primer() -> str:
 
 
 
+def load_map_notes() -> str:
+    """The written notes for each campaign map, as a prompt note.
+
+    The models read text, not pictures, so maps/<name>.md stands in for
+    maps/<name>.<image>. The notes describe where things are, not what happened,
+    so the note tells the model not to treat them as events of the session.
+    """
+    base = os.path.join(REPO_ROOT, "maps")
+    if not os.path.isdir(base):
+        return ""
+    notes = []
+    for filename in sorted(os.listdir(base)):
+        if not filename.endswith(".md"):
+            continue
+        try:
+            with open(os.path.join(base, filename), "r", encoding="utf-8") as f:
+                notes.append(f.read().strip())
+        except OSError:
+            continue
+    notes = [n for n in notes if n]
+    if not notes:
+        return ""
+    return (
+        "\n\nMAP NOTES — use these only to place locations and spell their names. They are not events: "
+        "never say the party went somewhere, met someone, or learned something unless the transcript "
+        "shows it, and do not record these notes as new lore.\n" + "\n\n".join(notes)
+    )
+
+
 def characters_dir() -> str:
     return os.path.join(REPO_ROOT, "artifacts", "characters")
 
